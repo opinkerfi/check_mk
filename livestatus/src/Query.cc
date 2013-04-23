@@ -759,6 +759,8 @@ void Query::start()
         }
 
         outputDatasetEnd();
+	if (doStats())
+            outputFieldSeparator();
         _need_ds_separator = true;
     }
 }
