@@ -1,5 +1,5 @@
 Name:		mk-livestatus
-Version:	1.6.12p7
+Version:	1.2.2
 Release:	1%{?dist}
 Summary:	Fetches status data live from the Nagios process via NEB
 
