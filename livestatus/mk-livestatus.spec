@@ -9,7 +9,7 @@ URL:		http://mathias-kettner.de/checkmk_livestatus.html
 Source0:	http://www.mathias-kettner.de/download/%{name}-%{version}.tar.gz
 BuildRoot:	%(mktemp -ud %{_tmppath}/%{name}-%{version}-%{release}-XXXXXX)
 
-#BuildRequires:	
+BuildRequires:	automake autoconf
 Requires:	nagios
 
 %description
