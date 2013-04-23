@@ -1,5 +1,5 @@
 Name:		mk-livestatus
-Version:	1.4.12p7
+Version:	1.5.12p7
 Release:	1%{?dist}
 Summary:	Fetches status data live from the Nagios process via NEB
 
@@ -60,6 +60,9 @@ rm -rf $RPM_BUILD_ROOT
 
 
 %changelog
+* Tue Apr 23 2013 Tomas Edwardsson <tommi@tommi.org> 1.5.12p7-1
+- Added autoconf and automake build requirement (tommi@tommi.org)
+
 * Tue Apr 23 2013 Tomas Edwardsson <tommi@tommi.org> 1.4.12p7-1
 - Added aclocal, automake and autoconf to the mix (tommi@tommi.org)
 
