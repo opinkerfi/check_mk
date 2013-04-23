@@ -1,5 +1,5 @@
 Name:		mk-livestatus
-Version:	1.2.12p7
+Version:	1.3.12p7
 Release:	1%{?dist}
 Summary:	Fetches status data live from the Nagios process via NEB
 
@@ -43,4 +43,7 @@ rm -rf $RPM_BUILD_ROOT
 
 
 %changelog
+* Tue Apr 23 2013 Tomas Edwardsson <tommi@tommi.org> 1.3.12p7-1
+- new package built with tito
+
 
