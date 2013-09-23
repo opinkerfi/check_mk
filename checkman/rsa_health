@@ -1,6 +1,6 @@
-title: Check system health via IBM Remote Supervisor Adapter (RSA)
+title: System health via IBM Remote Supervisor Adapter (RSA)
 agents: snmp
-author: Mathias Kettner <mk@mathias-kettner.de>
+catalog: hw/server/ibm
 license: GPL
 distribution: check_mk
 description:

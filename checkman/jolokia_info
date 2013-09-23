@@ -1,6 +1,6 @@
-title: Report type and version of Java application servers
+title: Type and version of Java application servers
 agents: linux
-author: Mathias Kettner <mk@mathias-kettner.de>
+catalog: app/java
 license: GPL
 distribution: check_mk
 description:

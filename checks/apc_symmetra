@@ -32,27 +32,74 @@
 # PowerNet-MIB::upsAdvBatteryCurrent.0     .1.3.6.1.4.1.318.1.1.1.2.2.9.0
 # PowerNet-MIB::upsAdvOutputVoltage.0      .1.3.6.1.4.1.318.1.1.1.4.2.1.0
 # PowerNet-MIB::upsAdvOutputCurrent.0      .1.3.6.1.4.1.318.1.1.1.4.2.4.0
+# PowerNet-MIB::upsAdvBatteryRunTimeRemaining.0      .1.3.6.1.4.1.318.1.1.1.2.2.3.0
+# PowerNet-MIB::upsAdvTestCalibrationResults   .1.3.6.1.4.1.318.1.1.1.7.2.6
 
 # upsBasicBatteryStatus: unknown(1), batteryNormal(2), batteryLow(3)
 # upsBasicOutputStatus: unknown(1),  onLine(2), onBattery(3), onSmartBoost(4),
 #   timedSleeping(5), softwareBypass(6), off(7), rebooting(8), switchedBypass(9),
 #   hardwareFailureBypass(10), sleepingUntilPowerReturn(11), onSmartTrim(12)
+# upsAdvTestCalibrationResults: ok(1), invalidTest(2), calibrationInProgress(3)
 
-apc_default_levels = ( 95, 40, 1, 220 )
+# PowerNet-MIB::upsAdvTestDiagnosticsResults   .1.3.6.1.4.1.318.1.1.1.7.2.3
+# upsAdvTestDiagnosticsResults OBJECT-TYPE
+#         SYNTAX INTEGER {
+#                 ok(1),
+#                 failed(2),
+#                 invalidTest(3),
+#                 testInProgress(4)
+#         }
+#         ACCESS read-only
+#         STATUS mandatory
+#         DESCRIPTION
+#                 "The results of the last UPS diagnostics test performed."
+#         ::= { upsAdvTest 3 }
+
+# PowerNet-MIB::upsAdvTestLastDiagnosticsDate  .1.3.6.1.4.1.318.1.1.1.7.2.4
+# upsAdvTestLastDiagnosticsDate OBJECT-TYPE
+#         SYNTAX DisplayString
+#         ACCESS read-only
+#         STATUS mandatory
+#         DESCRIPTION
+#                 "The date the last UPS diagnostics test was performed in
+#                  mm/dd/yy format."
+#         ::= { upsAdvTest 4 }
+#
+
+# old format:
+# apc_default_levels = ( 95, 40, 1, 220 )
+
+apc_default_levels = { "levels": ( 95, 40, 1, 220 ) }
 
 def check_apc(item, params, info):
     BasicBatteryStatus, BasicOutputStatus, AdvBatteryCapacity, \
     AdvBatteryTemperature, AdvBatteryCurrent, AdvOutputVoltage, \
-    AdvOutputCurrent = [ saveint(x) for x in info[0][:7] ]
-    RunTimeRemaining = int(info[0][7]) / 100
+    AdvOutputCurrent, AdvBatteryRunTimeRemaining, AdvTestCalibrationResults \
+                                                = [ saveint(x) for x in info[0][:9] ]
 
-    crit_capacity, crit_batt_temp, crit_batt_curr, crit_voltage = params
+    LastDiagnosticsDate = info[0][-1]
+    RunTimeRemaining = AdvBatteryRunTimeRemaining / 100
+
+    delay_after_test, alt_crit_capacity = None, None
+    if len(params) == 4 and type(params) is tuple:  # old format with 4 params in tuple
+        crit_capacity, crit_batt_temp, crit_batt_curr, crit_voltage = params
+    else:  # new format with up to 6 params in dict
+        crit_capacity, crit_batt_temp, crit_batt_curr, crit_voltage = params['levels']
+        if params.get("post_calibration_levels"):
+            delay_after_test  = params['post_calibration_levels']['additional_time_span']
+            alt_crit_capacity = params['post_calibration_levels']['altcapacity']
+            month, day, year = map(saveint, LastDiagnosticsDate.split('/'))
+            last_diag_date = datetime.date( year, month, day)
+            today = datetime.date.today()
+            diag_diff = today - last_diag_date
+            oneday = datetime.timedelta(days=1)
+            delay =  datetime.timedelta(minutes=delay_after_test)
 
     single_states = []
 
     # 1. Check battery status
     status_text = { 1:"unknown", 2:"normal", 3:"low" }
-    infotxt = "Battery status %s" % (status_text.get(BasicBatteryStatus))
+    infotxt = "Battery status: %s" % (status_text.get(BasicBatteryStatus))
     if BasicBatteryStatus != 2:
         state = 2
         infotxt += "(!!)"
@@ -65,8 +112,10 @@ def check_apc(item, params, info):
                     6:"software bypass", 7:"off", 8:"rebooting", 9:"switched bypass",
                    10:"hardware failure bypass", 11:"sleeping until power return",
                    12:"on smart trim" }
-    infotxt = "output status %s" % (status_text.get(BasicOutputStatus))
-    if BasicOutputStatus not in [2, 4, 12]:
+    calib_text = { 1:"", 2:" (calibration invalid)", 3:" (calibration in progress)" }
+    infotxt = "output status: %s%s" % (status_text.get(BasicOutputStatus), calib_text.get(AdvTestCalibrationResults))
+    # during calibration test is OK
+    if BasicOutputStatus not in [2, 4, 12] and AdvTestCalibrationResults != 3:
         state = 2
         infotxt += "(!!)"
     else:
@@ -74,12 +123,20 @@ def check_apc(item, params, info):
     single_states.append( (state, infotxt, None) )
 
     # 3. Check battery capacity
-    infotxt = "capacity %d%%" % AdvBatteryCapacity
-    if AdvBatteryCapacity <= crit_capacity:
-        state = 2
-        infotxt += "(!!)"
+    state = 0
+    infotxt = "capacity %d%% (crit at " % AdvBatteryCapacity
+
+    if alt_crit_capacity != None and diag_diff < oneday + delay:
+        infotxt += "%d%% in delay after calib.)" % alt_crit_capacity
+        if AdvBatteryCapacity <= alt_crit_capacity:
+            state = 2
+            infotxt += "(!!)"
     else:
-        state = 0
+        infotxt += "%d%%)" % crit_capacity
+        if AdvBatteryCapacity <= crit_capacity:
+            state = 2
+            infotxt += "(!!)"
+
     single_states.append( (state, infotxt, ("capacity", AdvBatteryCapacity, "", crit_capacity, 0, 100)) )
 
     # 4. Check battery temperature
@@ -113,10 +170,11 @@ def check_apc(item, params, info):
     single_states.append( (0, "output current %dA" % AdvOutputCurrent, ("current", AdvOutputCurrent)) )
 
     # 8. run time remaining
-    # RunTimeRemaining == "0:0:26:00.00"
+    # RunTimeRemaining formatiert == "26:00.00"
     hrs = int(RunTimeRemaining) / 3600
     mins, secs = divmod(int(RunTimeRemaining) % 3600, 60)
-    single_states.append( (0, "run time remaining: %02d:%02d:%02d" % (hrs, mins, secs), None) )
+    single_states.append( (0, "run time remaining: %02d:%02d:%02d" % (hrs, mins, secs),
+                            ("runtime", RunTimeRemaining/60)) )
 
     # create summary state
     worst_state = max([x[0] for x in single_states])
@@ -138,5 +196,5 @@ check_info['apc_symmetra'] = {
   "snmp_scan_function"  : lambda oid: oid(".1.3.6.1.2.1.1.2.0").startswith(".1.3.6.1.4.1.318.1.3"),
   "snmp_info"           : (".1.3.6.1.4.1.318.1.1.1",
                           [ "2.1.1.0", "4.1.1.0", "2.2.1.0", "2.2.2.0",
-                             "2.2.9.0", "4.2.1.0", "4.2.4.0", "2.2.3.0" ] )
+                             "2.2.9.0", "4.2.1.0", "4.2.4.0", "2.2.3.0", "7.2.6.0", "7.2.4.0" ] )
 }

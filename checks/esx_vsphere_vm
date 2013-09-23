@@ -45,8 +45,13 @@ def inventory_esx_vsphere_vm_mem(info):
     if 'summary.quickStats.guestMemoryUsage' in data:
         return [(None, {})]
 
-def check_esx_vsphere_vm_mem(item, params, info):
+def check_esx_vsphere_vm_mem(_no_item, _no_params, info):
     data = esx_vsphere_vm_convert(info)
+
+    # If the machine is powered of, we do not get data
+    powerstate = data["runtime.powerState"][0]
+    if powerstate != "poweredOn":
+        raise MKCounterWrapped("", "VM is %s, skipping this check" % powerstate)
 
     #consumed host memory
     host_memory_usage   = savefloat(data["summary.quickStats.hostMemoryUsage"][0]) * 1024 * 1024
@@ -97,7 +102,7 @@ def inventory_esx_vsphere_vm_name(info):
     if 'name' in data:
         return [(None, None)]
 
-def check_esx_vsphere_vm_name(item, params, info):
+def check_esx_vsphere_vm_name(_no_item, _no_params, info):
     data = esx_vsphere_vm_convert(info)
     return(0, " ".join(data['name']))
 
@@ -129,12 +134,12 @@ def inventory_esx_vsphere_vm_hb_status(info):
     if 'guestHeartbeatStatus' in data:
         return [(None, None)]
 
-def check_esx_vsphere_vm_hb_status(item, params, info):
+def check_esx_vsphere_vm_hb_status(_no_item, _no_params, info):
     data = esx_vsphere_vm_convert(info)
 
     vm_status = data['guestHeartbeatStatus'][0]
     state = 3
-    if vm_status == 'gray': 
+    if vm_status == 'gray':
         return 1, "No VMWare Tools installed"
     elif vm_status == 'green':
         state = 0
@@ -151,3 +156,43 @@ check_info['esx_vsphere_vm.heartbeat'] = {
   "service_description" : "ESX Heartbeat",
 }
 
+#.
+#   .--CPU-----------------------------------------------------------------.
+#   |                           ____ ____  _   _                           |
+#   |                          / ___|  _ \| | | |                          |
+#   |                         | |   | |_) | | | |                          |
+#   |                         | |___|  __/| |_| |                          |
+#   |                          \____|_|    \___/                           |
+#   |                                                                      |
+#   +----------------------------------------------------------------------+
+#   |                                                                      |
+#   '----------------------------------------------------------------------'
+
+# <<<esx_vsphere_vm>>>
+# config.hardware.numCPU 8
+# config.hardware.numCoresPerSocket 2
+# summary.quickStats.overallCpuUsage 8
+
+def inventory_esx_vsphere_vm_cpu(info):
+    data = esx_vsphere_vm_convert(info)
+    if 'summary.quickStats.overallCpuUsage' in data:
+        return [(None, None)]
+
+def check_esx_vsphere_vm_cpu(_no_item, _no_params, info):
+    data = esx_vsphere_vm_convert(info)
+    # VMs that are currently down do not have this entry
+    if 'summary.quickStats.overallCpuUsage' not in data:
+        raise MKCounterWrapped("", "No information about CPU usage. VM is probably powered off.")
+
+    usage_mhz = int(data['summary.quickStats.overallCpuUsage'][0])
+    cpus = int(data['config.hardware.numCPU'][0])
+    return 0, "demand is %.3f Ghz, %d virtual CPUs" % (usage_mhz / 1000.0, cpus), [ ("demand", usage_mhz) ]
+
+
+
+check_info['esx_vsphere_vm.cpu'] = {
+  "inventory_function"  : inventory_esx_vsphere_vm_cpu,
+  "check_function"      : check_esx_vsphere_vm_cpu,
+  "service_description" : "ESX CPU",
+  "has_perfdata"        : True,
+}

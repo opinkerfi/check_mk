@@ -1,6 +1,6 @@
-title: Monitors the usage of QoS classes on Cisco Routers using CISCO-CLASS-BASED-QOS-MIB
+title: Cisco Routers: Usage of QoS classes
 agents: snmp
-author: Lars Michelsen <lm@mathias-kettner.de>
+catalog: hw/network/cisco
 license: GPL
 distribution: check_mk
 description:

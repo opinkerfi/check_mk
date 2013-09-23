@@ -77,7 +77,7 @@ if defaults.omd_site:
             {
                 "title"            : "Topology of Site " + defaults.omd_site,
                 "iframe"           : defaults.url_prefix + 'nagvis/frontend/nagvis-js/index.php?' + \
-                                     'mod=Map&header_template=default&header_menu=0&label_show=1' + \
+                                     'mod=Map&header_template=on-demand-filter&header_menu=1&label_show=1' + \
                                      '&sources=automap&act=view&backend_id=' + defaults.omd_site + \
                                      '&render_mode=undirected&url_target=main',
                 "reload_on_resize" : True,
@@ -86,3 +86,24 @@ if defaults.omd_site:
             },
         ]
     }
+
+builtin_dashboards["simple_problems"] = {
+    "title" : _("Host &amp; Services Problems"),
+    "dashlets" : [
+        {
+            "title"      : _("Host Problems (unhandled)"),
+            "title_url"  : "view.py?view_name=hostproblems&is_host_acknowledged=0",
+            "view"       : "hostproblems_dash",
+            "position"   : (1, 1),
+            "size"       : (GROW, 18),
+        },
+        {
+            "title"      : _("Service Problems (unhandled)"),
+            "title_url"  : "view.py?view_name=svcproblems&is_service_acknowledged=0",
+            "view"       : "svcproblems_dash",
+            "position"   : (1, 19),
+            "size"       : (GROW, MAX),
+        },
+    ]
+}
+

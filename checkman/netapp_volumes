@@ -1,6 +1,6 @@
-title: Checks health and state of NetAPP volumes
+title: NetApp Filers: Health and State of Volumes
 agents: snmp
-author: Lars Michelsen <lm@mathias-kettner.de>
+catalog: hw/storagehw/netapp
 license: GPL
 distribution: check_mk
 description:

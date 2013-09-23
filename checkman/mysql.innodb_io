@@ -1,6 +1,6 @@
 title: MySQL InnoDB engine IO statistics
 agents: linux
-author: Mathias Kettner <mk@mathias-kettner.de>
+catalog: app/mysql
 license: GPL
 distribution: check_mk
 description:

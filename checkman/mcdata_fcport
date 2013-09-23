@@ -1,6 +1,6 @@
-title: Monitor traffic and status of McData FC switch ports
+title: McData FibreChannel Switches: Traffic and Status of Ports
 agents: snmp
-author: Mathias Kettner <mk@mathias-kettner.de>
+catalog: hw/storagehw/mcdata
 license: GPL
 distribution: check_mk
 description:

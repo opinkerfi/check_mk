@@ -1,6 +1,6 @@
-title: Monitor connections stats on Riverbed Steelhead appliance
+title: Riverbed Steelhead: Connection Stats
 agents: snmp
-author: Mathias Kettner <mk@mathias-kettner.de>
+catalog: hw/network/riverbed
 license: GPL
 distribution: check_mk
 description:

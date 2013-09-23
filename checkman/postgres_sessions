@@ -1,6 +1,6 @@
 title: PostgreSQL Database sessions
 agents: linux
-author: Mathias Kettner <mk@mathias-kettner.de>
+catalog: app/postgresql
 license: GPL
 distribution: check_mk
 description:

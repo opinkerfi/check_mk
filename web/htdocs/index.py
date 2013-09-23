@@ -31,11 +31,12 @@ __builtin__._ = lambda x: x
 __builtin__.current_language = None
 
 # Load modules
-from mod_python import apache, util, Cookie
+from mod_python import apache
 import sys, os, pprint
 from lib import *
 import livestatus
-import defaults, config, htmllib, login, userdb, hooks, default_permissions
+import defaults, config, login, userdb, hooks, default_permissions
+from html_mod_python import *
 
 # Load page handlers
 pagehandlers = {}
@@ -56,26 +57,6 @@ if defaults.omd_root:
             if fn.endswith(".py"):
                 execfile(local_pagehandlers_dir + "/" + fn)
 
-def read_get_vars(req):
-    req.vars = {}
-    req.listvars = {} # for variables with more than one occurrance
-    fields = util.FieldStorage(req, keep_blank_values = 1)
-    for field in fields.list:
-        varname = field.name
-        value = field.value
-        # Multiple occurrance of a variable? Store in extra list dict
-        if varname in req.vars:
-            if varname in req.listvars:
-                req.listvars[varname].append(value)
-            else:
-                req.listvars[varname] = [ req.vars[varname], value ]
-        # In the single-value-store the last occurrance of a variable
-        # has precedence. That makes appending variables to the current
-        # URL simpler.
-        req.vars[varname] = value
-
-def read_cookies(req):
-    req.cookies = Cookie.get_cookies(req)
 
 def connect_to_livestatus(html):
     html.site_status = {}
@@ -112,6 +93,11 @@ def connect_to_livestatus(html):
 
         for sitename, site in config.allsites().items():
             siteconf = config.user_siteconf.get(sitename, {})
+            # Convert livestatus-proxy links into UNIX socket
+            s = site["socket"]
+            if type(s) == tuple and s[0] == "proxy":
+                site["socket"] = "unix:" + defaults.livestatus_unix_socket + "proxy/" + sitename
+
             if siteconf.get("disabled", False):
                 html.site_status[sitename] = { "state" : "disabled", "site" : site }
                 disabled_sites[sitename] = site
@@ -178,7 +164,7 @@ def connect_to_livestatus(html):
 
 # Call the load_plugins() function in all modules
 def load_all_plugins():
-    for module in [ hooks, userdb, views, sidebar, dashboard, wato, bi, mobile ]:
+    for module in [ hooks, userdb, views, sidebar, dashboard, wato, bi, mobile, notify ]:
         try:
             module.load_plugins # just check if this function exists
             module.load_plugins()
@@ -193,24 +179,18 @@ def handler(req, profiling = True):
     req.content_type = "text/html; charset=UTF-8"
     req.header_sent = False
 
-    # All URIs end in .py. We strip away the .py and get the
-    # name of the page.
-    req.myfile = req.uri.split("/")[-1][:-3]
 
     # Create an object that contains all data about the request and
     # helper functions for creating valid HTML. Parse URI and
     # store results in the request object for later usage.
-    html = htmllib.html(req)
+    html = html_mod_python(req)
+
+    html.enable_debug = config.debug
     html.id = {} # create unique ID for this request
     __builtin__.html = html
-    req.uriinfo = htmllib.uriinfo(req)
 
     response_code = apache.OK
     try:
-        # Do not parse variables again if profiling (and second run is done)
-        if profiling:
-            read_get_vars(req)
-            read_cookies(req)
 
         # Ajax-Functions want no HTML output in case of an error but
         # just a plain server result code of 500
@@ -253,11 +233,11 @@ def handler(req, profiling = True):
 
         # Redirect to mobile GUI if we are a mobile device and
         # the URL is /
-        if req.myfile == "index" and html.mobile:
-            req.myfile = "mobile"
+        if html.myfile == "index" and html.mobile:
+            html.myfile = "mobile"
 
         # Get page handler
-        handler = pagehandlers.get(req.myfile, page_not_found)
+        handler = pagehandlers.get(html.myfile, page_not_found)
 
         # First initialization of the default permissions. Needs to be done before the auth_file
         # (auth.php) ist written (it's done during showing the login page for the first time).
@@ -267,7 +247,7 @@ def handler(req, profiling = True):
 
         # Special handling for automation.py. Sorry, this must be hardcoded
         # here. Automation calls bybass the normal authentication stuff
-        if req.myfile == "automation":
+        if html.myfile == "automation":
             try:
                 handler()
             except Exception, e:
@@ -280,37 +260,41 @@ def handler(req, profiling = True):
         html.set_output_format(output_format)
 
         # Is the user set by the webserver? otherwise use the cookie based auth
-        if not req.user or type(req.user) != str:
+        if not html.user or type(html.user) != str:
             config.auth_type = 'cookie'
             # When not authed tell the browser to ask for the password
-            req.user = login.check_auth()
-            if req.user == '':
+            html.user = login.check_auth()
+            if html.user == '':
                 if fail_silently:
                     # While api call don't show the login dialog
                     raise MKUnauthenticatedException(_('You are not authenticated.'))
+
+                # Redirect to the login-dialog with the current url as original target
+                # Never render the login form directly when accessing urls like "index.py"
+                # or "dashboard.py". This results in strange problems.
+                if html.myfile != 'login':
+                    html.set_http_header('Location',
+                        defaults.url_prefix + 'check_mk/login.py?_origtarget=%s' %
+                                                html.urlencode(html.makeuri([])))
+                    raise apache.SERVER_RETURN, apache.HTTP_MOVED_TEMPORARILY
 
                 # Initialize the i18n for the login dialog. This might be overridden
                 # later after user login
                 load_language(html.var("lang", config.get_language()))
 
-                # After auth check the regular page can be shown
-                result = login.page_login(plain_error)
-                if type(result) == tuple:
-                    # This is the redirect to the requested page directly after successful login
-                    req.user = result[0]
-                    req.uri  = result[1]
-                    req.myfile = req.uri.split("/")[-1][:-3]
-                    handler = pagehandlers.get(req.myfile, page_not_found)
-                else:
-                    release_all_locks()
-                    return result
+                # This either displays the login page or validates the information submitted
+                # to the login form. After successful login a http redirect to the originally
+                # requested page is performed.
+                login.page_login(plain_error)
+                release_all_locks()
+                return apache.OK
 
         # Call userdb page hooks which are executed on a regular base to e.g. syncronize
         # information withough explicit user triggered actions
         userdb.hook_page()
 
         # Set all permissions, read site config, and similar stuff
-        config.login(html.req.user)
+        config.login(html.user)
 
         # Initialize the multiste i18n. This will be replaced by
         # language settings stored in the user profile after the user
@@ -417,6 +401,7 @@ def handler(req, profiling = True):
 
     except Exception, e:
         html.unplug()
+        apache.log_error("%s %s %s" % (req.uri, _('Internal error') + ':', e), apache.APLOG_ERR) # log in all cases
         if plain_error:
             html.write(_("Internal error") + ": %s\n" % e)
         elif not fail_silently:
@@ -427,7 +412,6 @@ def handler(req, profiling = True):
             else:
                 url = html.makeuri([("debug", "1")])
                 html.show_error("%s: %s (<a href=\"%s\">%s</a>)" % (_('Internal error') + ':', e, url, _('Retry with debug mode')))
-                apache.log_error("%s %s" % (_('Internal error') + ':', e), apache.APLOG_ERR)
             html.footer()
         response_code = apache.OK
 

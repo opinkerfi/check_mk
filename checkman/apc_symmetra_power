@@ -1,6 +1,6 @@
-title: Check output power of APC Symmetra USV
+title: APC Symmetra UPS: Output power
 agents: snmp
-author: Mathias Kettner <mk@mathias-kettner.de>
+catalog: hw/power
 license: GPL
 distribution: check_mk
 description:

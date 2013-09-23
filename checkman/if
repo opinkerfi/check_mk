@@ -1,6 +1,6 @@
-title: Monitor traffic and status of network interfaces via standard MIB
+title: Traffic and status of network interfaces using 32 bit counters
 agents: snmp
-author: Mathias Kettner <mk@mathias-kettner.de>
+catalog: hw/network/generic
 license: GPL
 distribution: check_mk
 description:

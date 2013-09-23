@@ -22,6 +22,8 @@
 // to the Free Software Foundation, Inc., 51 Franklin St,  Fifth Floor,
 // Boston, MA 02110-1301 USA.
 
+#include <string.h>
+
 #include "Table.h"
 #include "Column.h"
 #include "Query.h"
@@ -36,8 +38,9 @@ void Table::addColumn(Column *col)
     if (column(col->name())) {
         delete col;
     }
-    else
+    else {
         _columns.insert(make_pair(col->name(), col));
+    }
 }
 
 

@@ -24,11 +24,17 @@
 # to the Free Software Foundation, Inc., 51 Franklin St,  Fifth Floor,
 # Boston, MA 02110-1301 USA.
 
-import grp, defaults, pprint, os, errno, gettext, marshal, fcntl, __builtin__
+import grp, pprint, os, errno, gettext, marshal, fcntl, __builtin__
+
+#Workarround when the file is included outsite multisite
+try:
+    import defaults
+except:
+    pass
 
 
-nagios_state_names = { -1: "NODATA", 0: "OK", 1: "WARNING", 2: "CRITICAL", 3: "UNKNOWN", 4: "DEPENDENT" }
-nagios_short_state_names = { -1: "PEND", 0: "OK", 1: "WARN", 2: "CRIT", 3: "UNKN", 4: "DEP" }
+nagios_state_names = { -1: "NODATA", 0: "OK", 1: "WARNING", 2: "CRITICAL", 3: "UNKNOWN" }
+nagios_short_state_names = { -1: "PEND", 0: "OK", 1: "WARN", 2: "CRIT", 3: "UNKN" }
 nagios_short_host_state_names = { 0: "UP", 1: "DOWN", 2: "UNREACH" }
 
 class MKGeneralException(Exception):
@@ -118,7 +124,9 @@ def savefloat(f):
     except:
         return 0.0
 
-
+# Generates a unique id
+def gen_id():
+    return file('/proc/sys/kernel/random/uuid').read().strip()
 
 # Load all files below share/check_mk/web/plugins/WHAT into a
 # specified context (global variables). Also honors the
@@ -223,7 +231,6 @@ crit_marker    = '<b class="stmark state2">CRIT</b>'
 unknown_marker = '<b class="stmark state3">UNKN</b>'
 
 def paint_host_list(site, hosts):
-    from htmllib import urlencode
     h = ""
     first = True
     for host in hosts:
@@ -231,7 +238,7 @@ def paint_host_list(site, hosts):
             first = False
         else:
             h += ", "
-        link = "view.py?view_name=hoststatus&site=%s&host=%s" % (urlencode(site), urlencode(host))
+        link = "view.py?view_name=hoststatus&site=%s&host=%s" % (html.urlencode(site), html.urlencode(host))
         if html.var("display_options"):
             link += "&display_options=%s" % html.var("display_options")
         h += "<a href=\"%s\">%s</a></div>" % (link, host)
@@ -279,14 +286,23 @@ def aquire_lock(path):
         return # No recursive locking
     fd = os.open(path, os.O_RDONLY)
     fcntl.flock(fd, fcntl.LOCK_EX)
-    g_aquired_locks.append(fd)
+    g_aquired_locks.append((path, fd))
     g_locked_paths.append(path)
+
+def release_lock(path):
+    if path not in g_locked_paths:
+        return # no unlocking needed
+    for lock_path, fd in g_aquired_locks:
+        if lock_path == path:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+            os.close(fd)
+            g_aquired_locks.remove((lock_path, fd))
+    g_locked_paths.remove(path)
 
 def release_all_locks():
     global g_aquired_locks, g_locked_paths
-    for fd in g_aquired_locks:
+    for path, fd in g_aquired_locks:
         os.close(fd)
     g_aquired_locks = []
     g_locked_paths = []
-
 

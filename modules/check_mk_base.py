@@ -103,6 +103,8 @@ opt_no_snmp_hosts            = False
 opt_use_snmp_walk            = False
 opt_cleanup_autochecks       = False
 fake_dns                     = False
+opt_keepalive                = False
+opt_cmc_relfilename          = "config"
 
 # register SIGINT handler for consistenct CTRL+C handling
 def interrupt_handler(signum, frame):
@@ -121,7 +123,10 @@ class MKCounterWrapped(Exception):
         self.name = countername
         self.reason = reason
     def __str__(self):
-        return '%s: %s' % (self.name, self.reason)
+        if self.name:
+            return '%s: %s' % (self.name, self.reason)
+        else:
+            return self.reason
 
 class MKAgentError(Exception):
     def __init__(self, reason):
@@ -202,7 +207,7 @@ def submit_aggregated_results(hostname):
                 text = " *** ".join([ item + " " + output for itemstatus, item, output in outputlist ])
 
         if not opt_dont_submit:
-            submit_to_nagios(aggr_hostname, servicedesc, status, text)
+            submit_to_core(aggr_hostname, servicedesc, status, text)
 
         if opt_verbose:
             color = { 0: tty_green, 1: tty_yellow, 2: tty_red, 3: tty_magenta }[status]
@@ -220,7 +225,7 @@ def submit_check_mk_aggregation(hostname, status, output):
         return
 
     if not opt_dont_submit:
-        submit_to_nagios(summary_hostname(hostname), "Check_MK", status, output)
+        submit_to_core(summary_hostname(hostname), "Check_MK", status, output)
 
     if opt_verbose:
         color = { 0: tty_green, 1: tty_yellow, 2: tty_red, 3: tty_magenta }[status]
@@ -337,7 +342,7 @@ def get_realhost_info(hostname, ipaddress, check_type, max_cache_age, ignore_che
         check_interval = check_interval_of(hostname, check_type)
         if not ignore_check_interval \
            and check_interval is not None and os.path.exists(cache_path) \
-           and cachefile_age(cache_path) < check_interval:
+           and cachefile_age(cache_path) < check_interval * 60:
             # cache file is newer than check_interval, skip this check
             raise MKSkipCheck()
 
@@ -386,6 +391,9 @@ def get_realhost_info(hostname, ipaddress, check_type, max_cache_age, ignore_che
     if is_tcp_host(hostname):
         try:
             output = get_agent_info(hostname, ipaddress, max_cache_age)
+        except MKCheckTimeout:
+            raise
+
         except Exception, e:
             agent_failed = True
             # Remove piggybacked information from the host (in the
@@ -568,7 +576,7 @@ def write_cache_file(relpath, output):
 
 
 # Get information about a real host (not a cluster node) via TCP
-# or by executing an external programm. ipaddress may be None.
+# or by executing an external program. ipaddress may be None.
 # In that case it will be looked up if needed. Also caching will
 # be handled here
 def get_agent_info(hostname, ipaddress, max_cache_age):
@@ -595,10 +603,10 @@ def get_agent_info(hostname, ipaddress, max_cache_age):
 
     return output
 
-# Get data in case of external programm
+# Get data in case of external program
 def get_agent_info_program(commandline):
     if opt_verbose:
-        sys.stderr.write("Calling external programm %s\n" % commandline)
+        sys.stderr.write("Calling external program %s\n" % commandline)
     try:
         sout = os.popen(commandline + " 2>/dev/null")
         output = sout.read()
@@ -608,9 +616,9 @@ def get_agent_info_program(commandline):
 
     if exitstatus:
         if exitstatus >> 8 == 127:
-            raise MKAgentError("Programm '%s' not found (exit code 127)" % (commandline,))
+            raise MKAgentError("Program '%s' not found (exit code 127)" % (commandline,))
         else:
-            raise MKAgentError("Programm '%s' exited with code %d" % (commandline, exitstatus >> 8))
+            raise MKAgentError("Agent exited with code %d" % (exitstatus >> 8,))
     return output
 
 # Get data in case of TCP
@@ -644,6 +652,8 @@ def get_agent_info_tcp(hostname, ipaddress):
                   agent_port_of(hostname))
         return output
     except MKAgentError, e:
+        raise
+    except MKCheckTimeout:
         raise
     except Exception, e:
         raise MKAgentError("Cannot get data from TCP port %s:%d: %s" %
@@ -802,7 +812,7 @@ def get_counter(countername, this_time, this_val, allow_negative=False):
 # this_time: timestamp of new value
 # backlog: averaging horizon in minutes
 # initialize_zero: assume average of 0.0 when now previous average is stored
-def get_average(itemname, this_time, this_val, backlog, initialize_zero = True):
+def get_average(itemname, this_time, this_val, backlog_minutes, initialize_zero = True):
 
     # first call: take current value as average or assume 0.0
     if not itemname in g_counters:
@@ -815,15 +825,20 @@ def get_average(itemname, this_time, this_val, backlog, initialize_zero = True):
     last_time, last_val = g_counters.get(itemname)
     timedif = this_time - last_time
 
+    # Gracefully handle time-anomaly of target systems. We loose
+    # one value, but what then heck..
+    if timedif < 0:
+        timedif = 0
+
     # Compute the weight: We do it like this: First we assume that
-    # we get one sample per minute. And that backlog is the number
+    # we get one sample per minute. And that backlog_minutes is the number
     # of minutes we should average over. Then we want that the weight
     # of the values of the last average minutes have a fraction of W%
     # in the result and the rest until infinity the rest (1-W%).
-    # Then the weight can be computed as backlog'th root of 1-W
+    # Then the weight can be computed as backlog_minutes'th root of 1-W
     percentile = 0.50
 
-    weight_per_minute = (1 - percentile) ** (1.0 / backlog)
+    weight_per_minute = (1 - percentile) ** (1.0 / backlog_minutes)
 
     # now let's compute the weight per second. This is done
     weight = weight_per_minute ** (timedif / 60.0)
@@ -865,7 +880,6 @@ def save_counters(hostname):
 # This is the main check function - the central entry point to all and
 # everything
 def do_check(hostname, ipaddress, only_check_types = None):
-
     if opt_verbose:
         sys.stderr.write("Check_mk version %s\n" % check_mk_version)
 
@@ -893,9 +907,12 @@ def do_check(hostname, ipaddress, only_check_types = None):
             status = exit_spec.get("wrong_version", 1)
         else:
             output = ""
-            if agent_version != None:
+            if not is_cluster(hostname) and agent_version != None:
                 output += "Agent version %s, " % agent_version
             status = 0
+
+    except MKCheckTimeout:
+        raise
 
     except MKGeneralException, e:
         if opt_debug:
@@ -916,14 +933,26 @@ def do_check(hostname, ipaddress, only_check_types = None):
     run_time = time.time() - start_time
     if check_mk_perfdata_with_times:
         times = os.times()
+        if opt_keepalive:
+            times = map(lambda a: a[0]-a[1], zip(times, g_initial_times))
         output += "execution time %.1f sec|execution_time=%.3f user_time=%.3f "\
                   "system_time=%.3f children_user_time=%.3f children_system_time=%.3f\n" %\
                 (run_time, run_time, times[0], times[1], times[2], times[3])
     else:
         output += "execution time %.1f sec|execution_time=%.3f\n" % (run_time, run_time)
 
-    sys.stdout.write(nagios_state_names[status] + " - " + output)
-    sys.exit(status)
+    if opt_keepalive:
+        global total_check_output
+        total_check_output += output
+        return status
+    else:
+        sys.stdout.write(nagios_state_names[status] + " - " + output)
+        sys.exit(status)
+
+# Keepalive-mode for running cmk as a check helper.
+class MKCheckTimeout(Exception):
+    pass
+
 
 def check_unimplemented(checkname, params, info):
     return (3, 'UNKNOWN - Check not implemented')
@@ -1063,7 +1092,7 @@ def do_all_checks_on_host(hostname, ipaddress, only_check_types = None):
             # any check result in that case:
             except MKCounterWrapped, e:
                 if opt_verbose:
-                    print "Counter wrapped, not handled by check, ignoring this check result: %s" % e
+                    print "Cannot compute check result: %s" % e
                 dont_submit = True
             except Exception, e:
                 result = (3, "invalid output from agent, invalid check parameters or error in implementation of check %s. Please set <tt>debug_log</tt> to a filename in <tt>main.mk</tt> for enabling exception logging." % checkname)
@@ -1218,7 +1247,7 @@ def submit_check_result(host, servicedesc, result, sa):
             perftext = "|" + (" ".join(perftexts))
 
     if not opt_dont_submit:
-        submit_to_nagios(host, servicedesc, state, infotext + perftext)
+        submit_to_core(host, servicedesc, state, infotext + perftext)
 
     if opt_verbose:
         if opt_showperfdata:
@@ -1229,8 +1258,19 @@ def submit_check_result(host, servicedesc, result, sa):
         print "%-20s %s%s%-56s%s%s" % (servicedesc, tty_bold, color, infotext, tty_normal, p)
 
 
-def submit_to_nagios(host, service, state, output):
-    if check_submission == "pipe":
+def submit_to_core(host, service, state, output):
+    # Save data for sending it to the Check_MK Micro Core
+    if monitoring_core == "cmc":
+        result = "\t%d\t%s\t%s\n" % (state, service, output.replace("\0", "")) # remove binary 0, CMC does not like it
+        if opt_keepalive:
+            global total_check_output
+            total_check_output += result
+        else:
+            if not opt_verbose:
+                sys.stdout.write(result)
+
+    # Send to Nagios/Icinga command pipe
+    elif check_submission == "pipe":
         open_command_pipe()
         if nagios_command_pipe:
             nagios_command_pipe.write("[%d] PROCESS_SERVICE_CHECK_RESULT;%s;%s;%d;%s\n" %
@@ -1238,6 +1278,8 @@ def submit_to_nagios(host, service, state, output):
             # Important: Nagios needs the complete command in one single write() block!
             # Python buffers and sends chunks of 4096 bytes, if we do not flush.
             nagios_command_pipe.flush()
+
+    # Create check result files for Nagios/Icinga
     elif check_submission == "file":
         open_checkresult_file()
         if checkresult_file_fd:
@@ -1287,6 +1329,13 @@ def nodes_of(hostname):
             return nodes
     return None
 
+def pnp_cleanup(s):
+    return s \
+        .replace(' ',  '_') \
+        .replace(':',  '_') \
+        .replace('/',  '_') \
+        .replace('\\', '_')
+
 
 #   +----------------------------------------------------------------------+
 #   |     ____ _               _      _          _                         |
@@ -1304,7 +1353,7 @@ def nodes_of(hostname):
 # value:   currently measured value
 # dsname:  name of the datasource in the RRD that corresponds to this value
 # unit:    unit to be displayed in the plugin output, e.g. "MB/s"
-# factor:  the levels are multiplied with this factor before applying 
+# factor:  the levels are multiplied with this factor before applying
 #          them to the value. For example the disk-IO check uses B/s
 #          as the unit for the value. But the levels are in MB/s. In that
 #          case the factor is 1.0 / 1048576.
@@ -1332,6 +1381,8 @@ def check_levels(value, dsname, params, unit = "", factor = 1.0, statemarkers=Fa
             else:
                 infotext += "no reference for prediction yet"
         except Exception, e:
+            if opt_debug:
+                raise
             return 3, "%s" % e, []
 
     if ref_value:
@@ -1477,7 +1528,7 @@ def get_age_human_readable(secs):
         return "%d days, %d hours" % (days, hours)
     return "%d days" % days
 
-# Quote string for use as arguments on the shell 
+# Quote string for use as arguments on the shell
 def quote_shell_string(s):
     return "'" + s.replace("'", "'\"'\"'") + "'"
 
@@ -1490,13 +1541,21 @@ def check_timeperiod(timeperiod):
     global g_inactive_timerperiods
     # Let exceptions happen, they will be handled upstream.
     if g_inactive_timerperiods == None:
-        import socket
-        s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        s.connect(livestatus_unix_socket)
-        # We just get the currently inactive timeperiods. All others
-        # (also non-existing) are considered to be active
-        s.send("GET timeperiods\nColumns:name\nFilter: in = 0\n")
-        s.shutdown(socket.SHUT_WR)
-        g_inactive_timerperiods = s.recv(10000000).splitlines()
+        try:
+            import socket
+            s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            s.connect(livestatus_unix_socket)
+            # We just get the currently inactive timeperiods. All others
+            # (also non-existing) are considered to be active
+            s.send("GET timeperiods\nColumns: name\nFilter: in = 0\n")
+            s.shutdown(socket.SHUT_WR)
+            g_inactive_timerperiods = s.recv(10000000).splitlines()
+        except Exception, e:
+            if opt_debug:
+                raise
+            else:
+                # If the query is not successful better skip this check then fail
+                return False
+
     return timeperiod not in g_inactive_timerperiods
 

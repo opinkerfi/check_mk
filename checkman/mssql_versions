@@ -1,6 +1,6 @@
-title: Display versions of MSSQL server processes
+title: versions of MSSQL server processes
 agents: windows
-author: Lars Michelsen <lm@mathias-kettner.de>
+catalog: app/mssql
 license: GPL
 distribution: check_mk
 description:

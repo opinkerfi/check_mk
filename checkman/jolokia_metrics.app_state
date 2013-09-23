@@ -1,6 +1,6 @@
 title: State of JVM applications
 agents: linux
-author: Mathias Kettner <mk@mathias-kettner.de>
+catalog: app/java
 license: GPL
 distribution: check_mk
 description:

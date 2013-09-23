@@ -55,11 +55,10 @@ def perfometer_check_mk_df(row, check_command, perf_data):
     varname, value, unit, warn, crit, minn, maxx = perf_data[0]
     perc_used = 100 * (float(value) / float(maxx))
     perc_free = 100 - float(perc_used)
-    color = { 0: "#0f8", 1: "#ff2", 2: "#f22", 3: "#fa2" }[row["service_state"]]
-    h += perfometer_td(perc_used, color)
+    h += perfometer_td(perc_used, "#00ffc6")
     h += perfometer_td(perc_free, "white")
     h += "</tr></table>"
-    return "%d%%" % perc_used, h
+    return "%0.2f%%" % perc_used, h
 
 perfometers["check_mk-df"] = perfometer_check_mk_df
 perfometers["check_mk-vms_df"] = perfometer_check_mk_df
@@ -71,7 +70,48 @@ perfometers["check_mk-zfsget"] = perfometer_check_mk_df
 perfometers["check_mk-hr_fs"] = perfometer_check_mk_df
 perfometers["check_mk-oracle_asm_diskgroup"] = perfometer_check_mk_df
 perfometers["check_mk-mysql_capacity"] = perfometer_check_mk_df
-perfometers["check_mk-esx_vsphere_datastores"] = perfometer_check_mk_df
+perfometers["check_mk-esx_vsphere_counters.ramdisk"] = perfometer_check_mk_df
+
+def perfometer_esx_vsphere_datastores(row, check_command, perf_data):
+    used_mb        = perf_data[0][1]
+    maxx           = perf_data[0][-1]
+    # perf data might be incomplete, if trending perfdata is off...
+    uncommitted_mb = 0
+    for entry in perf_data:
+        if entry[0] == "uncommitted":
+            uncommitted_mb = entry[1]
+            break
+
+    perc_used = 100 * (float(used_mb) / float(maxx))
+    perc_uncommitted = 100 * (float(uncommitted_mb) / float(maxx))
+    perc_totally_free = 100 - perc_used - perc_uncommitted
+
+    h = '<table><tr>'
+    if perc_used + perc_uncommitted <= 100:
+        # Regular handling, no overcommitt
+        h += perfometer_td(perc_used, "#00ffc6")
+        h += perfometer_td(perc_uncommitted, "#eeccff")
+        h += perfometer_td(perc_totally_free, "white")
+    else:
+        # Visualize overcommitted space by scaling to total overcommittment value
+        # and drawing the capacity as red line in the perfometer
+        total = perc_used + perc_uncommitted
+        perc_used_bar = perc_used * 100 / total
+        perc_uncommitted_bar = perc_uncommitted * 100 / total
+        perc_free = (100 - perc_used) * 100 / total
+
+        h += perfometer_td(perc_used_bar, "#00ffc6")
+        h += perfometer_td(perc_free, "#eeccff")
+        h += perfometer_td(1, "red") # This line visualizes the capacity
+        h += perfometer_td(perc_uncommitted - perc_free, "#eeccff")
+    h += "</tr></table>"
+
+    legend = "%0.2f%%" % perc_used
+    if uncommitted_mb:
+        legend += " (+%0.2f%%)" % perc_uncommitted
+    return legend, h
+
+perfometers["check_mk-esx_vsphere_datastores"] = perfometer_esx_vsphere_datastores
 
 
 def perfometer_check_mk_kernel_util(row, check_command, perf_data):
@@ -234,6 +274,8 @@ perfometers["check_mk-f5_bigip_temp"] = perfometer_temperature
 perfometers["check_mk-hp_proliant_temp"] = perfometer_temperature
 perfometers["check_mk-akcp_sensor_temp"] = perfometer_temperature
 perfometers["check_mk-fsc_temp"] = perfometer_temperature
+perfometers["check_mk-viprinet_temp"] = perfometer_temperature
+perfometers["check_mk-hwg_temp"] = perfometer_temperature
 
 def perfometer_blower(row, check_command, perf_data):
     rpm = saveint(perf_data[0][1])
@@ -296,6 +338,7 @@ def perfometer_check_mk_if(row, check_command, perf_data):
 perfometers["check_mk-if"] = perfometer_check_mk_if
 perfometers["check_mk-if64"] = perfometer_check_mk_if
 perfometers["check_mk-if64_tplink"] = perfometer_check_mk_if
+perfometers["check_mk-winperf_if"] = perfometer_check_mk_if
 perfometers["check_mk-vms_if"] = perfometer_check_mk_if
 perfometers["check_mk-if_lancom"] = perfometer_check_mk_if
 perfometers["check_mk-lnx_if"] = perfometer_check_mk_if
@@ -372,6 +415,17 @@ def perfometer_cpu_utilization(row, check_command, perf_data):
 perfometers["check_mk-h3c_lanswitch_cpu"] = perfometer_cpu_utilization
 perfometers["check_mk-winperf_processor.util"] = perfometer_cpu_utilization
 
+def perfometer_ps_perf(row, check_command, perf_data):
+    perf_dict = dict([(p[0], float(p[1])) for p in perf_data])
+    try:
+        perc = perf_dict["pcpu"]
+        return "%.1f%%" % perc, perfometer_linear(perc, "#30ff80")
+    except:
+        return "", ""
+
+perfometers["check_mk-ps.perf"] = perfometer_ps_perf
+
+
 def perfometer_hpux_snmp_cs_cpu(row, check_command, perf_data):
     h = '<table><tr>'
     h += perfometer_td(float(perf_data[0][1]), "#60f020")
@@ -415,6 +469,7 @@ perfometers["check_mk-diskstat"] = perfometer_check_mk_diskstat
 perfometers["check_mk-winperf_phydisk"] = perfometer_check_mk_diskstat
 perfometers["check_mk-hpux_lunstats"] = perfometer_check_mk_diskstat
 perfometers["check_mk-mysql.innodb_io"] = perfometer_check_mk_diskstat
+perfometers["check_mk-esx_vsphere_counters.diskio"] = perfometer_check_mk_diskstat
 
 def perfometer_in_out_mb_per_sec(row, check_command, perf_data):
     read_mbit = float(perf_data[0][1]) / 131072
@@ -445,7 +500,8 @@ def perfometer_check_mk_printer_supply(row, check_command, perf_data):
     fg_color = '#000000'
     if 'black' in s or s[-1] == 'k':
         colors   = [ '#000000', '#6E6F00', '#6F0000' ]
-        fg_color = '#ffffff'
+        if left >= 60:
+            fg_color = '#ffffff'
     elif 'magenta' in s or s[-1] == 'm':
         colors = [ '#fc00ff', '#FC7FFF', '#FEDFFF' ]
     elif 'yellow' in s or s[-1] == 'y':

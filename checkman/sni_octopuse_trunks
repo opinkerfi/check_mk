@@ -1,6 +1,6 @@
 title: Siemens Octopus E trunk ports
 agents: snmp
-author: Florian Heigl <fh@mathias-kettner.de>
+catalog: hw/phone
 license: GPL
 distribution: check_mk
 description:

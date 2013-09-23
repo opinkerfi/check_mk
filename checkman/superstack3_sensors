@@ -1,6 +1,6 @@
-title: Check 3Com SuperStack 3 Hardware / FRU sensors
+title: 3Com SuperStack 3 Switches: Hardware / FRU sensors
 agents: snmp
-author: Florian Heigl <fh@mathias-kettner.de>
+catalog: hw/network/h3c
 license: GPL
 distribution: check_mk
 description:

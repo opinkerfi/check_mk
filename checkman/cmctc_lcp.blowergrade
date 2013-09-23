@@ -1,6 +1,6 @@
 title: Rittal CMC-TC LCP Blower total state
 agents: snmp
-author: Mathias Kettner <mk@mathias-kettner.de>
+catalog: hw/environment
 license: GPL
 distribution: check_mk
 description:

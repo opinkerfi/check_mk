@@ -1,6 +1,6 @@
-title: Monitor OpenVMS Queue Jobs
+title: OpenVMS Queue Jobs
 agents: openvms
-author: Mathias Kettner <mk@mathias-kettner.de>
+catalog: os/ps
 license: GPL
 distribution: check_mk
 description:

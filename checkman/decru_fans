@@ -1,6 +1,6 @@
-title: Check cooling fan of DECRU NAS
+title: DECRU NAS: Cooling fans
 agents: snmp
-author: Mathias Kettner <mk@mathias-kettner.de>
+catalog: hw/network/decru
 license: GPL
 distribution: check_mk
 description:

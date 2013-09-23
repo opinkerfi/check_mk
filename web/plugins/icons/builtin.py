@@ -94,7 +94,7 @@ def paint_reschedule(what, row, tags, custom_vars):
         servicedesc = ''
         wait_svc    = ''
         icon        = 'icon_reload'
-        txt         = _('Reschedule an immediate check of this %s') % _(what)
+        txt         = _('Reschedule an immediate check')
 
         if what == 'service':
             servicedesc = row['service_description'].replace("\\","\\\\")
@@ -109,12 +109,33 @@ def paint_reschedule(what, row, tags, custom_vars):
         return '<a href=\"javascript:void(0);\" ' \
                'onclick="performAction(this, \'reschedule\', \'%s\', \'%s\', \'%s\', \'%s\');">' \
                '<img class=icon title="%s" src="images/%s.gif" /></a>' % \
-                (row["site"], row["host_name"], htmllib.urlencode(servicedesc), htmllib.urlencode(wait_svc), txt, icon)
+                (row["site"], row["host_name"], html.urlencode(servicedesc), html.urlencode(wait_svc), txt, icon)
 
 multisite_icons.append({
     'columns':         [ 'active_checks_enabled' ],
     'paint':           paint_reschedule,
 })
+
+
+def paint_rule_editor(what, row, tags, custom_vars):
+    if config.may("wato.rulesets") and config.multisite_draw_ruleicon:
+        if what == 'service':
+            check_command = row["service_check_command"]
+            if check_command.startswith("check_mk-") or \
+               check_command.startswith("check_mk_active-"):
+                url = html.makeuri_contextless( [("mode", "edit_ruleset"),
+                                                 ("check_command", row["service_check_command"]),
+                                                 ("service_description", row["service_description"]),
+                                                 ("host", row["host_name"])], "wato.py")
+                title = _("Edit check parameters for this service")
+                return '<a href="%s"><img title="%s" class=icon src="images/icon_rulesets.png"></a>' % \
+                        (url, title)
+
+multisite_icons.append({
+    'service_columns': [ 'description', 'check_command', "host_name" ],
+    'paint':           paint_rule_editor,
+})
+
 #   +----------------------------------------------------------------------+
 #   |       _        _                        _          _                 |
 #   |      / \   ___| | ___ __   _____      _| | ___  __| | __ _  ___      |
@@ -175,14 +196,14 @@ def pnp_url(row, what, how = 'graph'):
     site = html.site_status[sitename]["site"]
     if html.mobile:
         url = site["url_prefix"] + ("pnp4nagios/index.php?kohana_uri=/mobile/%s/%s/%s" % \
-            (how, htmllib.urlencode(host), htmllib.urlencode(svc)))
+            (how, html.urlencode(host), html.urlencode(svc)))
     else:
         url = site["url_prefix"] + ("pnp4nagios/index.php/%s?host=%s&srv=%s" % \
-            (how, htmllib.urlencode(host), htmllib.urlencode(svc)))
+            (how, html.urlencode(host), html.urlencode(svc)))
 
     if how == 'graph':
         url += "&theme=multisite&baseurl=%scheck_mk/" % \
-                        htmllib.urlencode(site["url_prefix"])
+                        html.urlencode(site["url_prefix"])
     return url
 
 def pnp_popup_url(row, what):
@@ -224,7 +245,7 @@ def paint_prediction_icon(what, row, tags, custom_vars):
                 dsname = varname[8:]
                 sitename = row["site"]
                 site = html.site_status[sitename]["site"]
-                url = site["url_prefix"] + "check_mk/prediction_graph.py?" + htmllib.urlencode_vars([
+                url = site["url_prefix"] + "check_mk/prediction_graph.py?" + html.urlencode_vars([
                     ( "host", row["host_name"] ),
                     ( "service", row["service_description"] ),
                     ( "dsname", dsname ) ])
@@ -271,36 +292,42 @@ multisite_icons.append({
 #   |                                                                      |
 #   +----------------------------------------------------------------------+
 
-# Adds the url_prefix of the services site to the notes url configured in this site.
-# It also adds the master_url which will be used to link back to the source site
-# in multi site environments.
-def logwatch_url(sitename, notes_url):
-    i = notes_url.index("check_mk/logwatch.py")
+def logwatch_url(sitename, hostname, item):
+    host_item_url = "check_mk/logwatch.py?host=%s&file=%s" % (html.urlencode(hostname), html.urlencode(item))
     site = html.site_status[sitename]["site"]
-
     master_url = ''
     if config.is_multisite():
         master_url = '&master_url=' + defaults.url_prefix + 'check_mk/'
 
-    return site["url_prefix"] + notes_url[i:] + master_url
+    return site["url_prefix"] + host_item_url + master_url
 
+def paint_logwatch(what, row, tags, custom_vars):
+    if what != "service":
+        return
+    if row[what + "_check_command"] == 'check_mk-logwatch':
+        return '<a href="%s"><img class=icon ' \
+               'src="images/icon_logwatch.png\"></a>' % \
+                   logwatch_url(row["site"], row['host_name'], row['service_description'][4:])
+
+multisite_icons.append({
+    'service_columns': [ 'host_name', 'service_description', 'check_command' ],
+    'paint':           paint_logwatch,
+})
+
+
+# Adds the url_prefix of the services site to the notes url configured in this site.
+# It also adds the master_url which will be used to link back to the source site
+# in multi site environments.
 def paint_notes(what, row, tags, custom_vars):
     if 'X' in html.display_options:
-        # notes_url (only, if not a Check_MK logwatch check pointing to
-        # logwatch.py. These is done by a special icon)
         notes_url = row[what + "_notes_url_expanded"]
         check_command = row[what + "_check_command"]
+        if check_command == 'check_mk-logwatch' and \
+            "check_mk/logwatch.py?host" in notes_url:
+            return
         if notes_url:
-            # unmodified original logwatch link
-            # -> translate into more intelligent icon
-            if check_command == 'check_mk-logwatch' \
-               and "/check_mk/logwatch.py" in notes_url:
-                return '<a href="%s"><img class=icon ' \
-                       'src="images/icon_logwatch.png\"></a>' % \
-                           logwatch_url(row["site"], notes_url)
-            else:
-                return '<a href="%s"><img class=icon ' \
-                       'src="images/icon_notes.gif"></a>' % notes_url
+            return '<a href="%s"><img class=icon ' \
+                   'src="images/icon_notes.gif"></a>' % notes_url
 
 multisite_icons.append({
     'columns':         [ 'notes_url_expanded', 'check_command' ],
@@ -403,6 +430,29 @@ def paint_flapping(what, row, tags, custom_vars):
 multisite_icons.append({
     'columns':         [ 'is_flapping' ],
     'paint':           paint_flapping,
+})
+
+#   .--Staleness-----------------------------------------------------------.
+#   |              ____  _        _                                        |
+#   |             / ___|| |_ __ _| | ___ _ __   ___  ___ ___               |
+#   |             \___ \| __/ _` | |/ _ \ '_ \ / _ \/ __/ __|              |
+#   |              ___) | || (_| | |  __/ | | |  __/\__ \__ \              |
+#   |             |____/ \__\__,_|_|\___|_| |_|\___||___/___/              |
+#   |                                                                      |
+#   +----------------------------------------------------------------------+
+
+def paint_is_stale(what, row, tags, custom_vars):
+    if is_stale(row):
+        if what == "host":
+            title = _("This host is stale")
+        else:
+            title = _("This service is stale")
+        title += _(", no data has been received within the last %.1f check periods") % config.staleness_threshold
+        return '<img class=icon title="%s" src="images/icon_stale.png">' % title
+
+multisite_icons.append({
+    'columns':         [ 'staleness' ],
+    'paint':           paint_is_stale,
 })
 
 #   +----------------------------------------------------------------------+

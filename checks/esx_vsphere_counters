@@ -51,6 +51,58 @@
 # sys.uptime||630664|second
 
 
+#   .--Disk IO-------------------------------------------------------------.
+#   |                     ____  _     _      ___ ___                       |
+#   |                    |  _ \(_)___| | __ |_ _/ _ \                      |
+#   |                    | | | | / __| |/ /  | | | | |                     |
+#   |                    | |_| | \__ \   <   | | |_| |                     |
+#   |                    |____/|_|___/_|\_\ |___\___/                      |
+#   |                                                                      |
+#   '----------------------------------------------------------------------'
+# Example output:
+# disk.deviceLatency|naa.600605b002db9f7018d0a40c2a1444b0|0|millisecond
+# disk.numberRead|naa.600605b002db9f7018d0a40c2a1444b0|8|number
+# disk.numberWrite|naa.600605b002db9f7018d0a40c2a1444b0|47|number
+# disk.read|naa.600605b002db9f7018d0a40c2a1444b0|12|kiloBytesPerSecond
+# disk.read||12|kiloBytesPerSecond
+# disk.write|naa.600605b002db9f7018d0a40c2a1444b0|51|kiloBytesPerSecond
+# disk.write||51|kiloBytesPerSecond
+
+
+def inventory_esx_vsphere_counters_diskio(info):
+    for counter, item, value, unit in info:
+        if counter == 'disk.read' and item == '':
+            return [(None, None)]
+
+def check_esx_vsphere_counters_diskio(_no_item, _no_params, info):
+    reads = 0
+    writes = 0
+    for counter, item, value, unit in info:
+        if item == '':
+            if counter == 'disk.read':
+                read_bytes = int(value) * 1024
+            elif counter == 'disk.write':
+                write_bytes = int(value) * 1024
+        elif counter == 'disk.numberRead':
+            reads += int(value)
+        elif counter == 'disk.numberWrite':
+            writes += int(value)
+
+    return 0, "%s/sec read, %s/sec write, IOs: %.2f/sec" % (
+        get_bytes_human_readable(read_bytes), get_bytes_human_readable(write_bytes), reads + writes,), \
+        [ ("read", read_bytes), ("write", write_bytes), ("ios", reads + writes) ]
+
+
+check_info['esx_vsphere_counters.diskio'] = {
+   'inventory_function'      : inventory_esx_vsphere_counters_diskio,
+   'check_function'          : check_esx_vsphere_counters_diskio,
+   'service_description':     'Disk IO SUMMARY',
+   'has_perfdata':            True,
+}
+
+
+
+#.
 #   .--Interfaces----------------------------------------------------------.
 #   |           ___       _             __                                 |
 #   |          |_ _|_ __ | |_ ___ _ __ / _| __ _  ___ ___  ___             |
@@ -76,7 +128,7 @@ def convert_esx_counters_if(info):
             by_item[item][name] = int(value)
 
     # Example of by_item:
-    # { 
+    # {
     #   'vmnic0': {
     #         'broadcastRx': 31,
     #         'broadcastTx': 0,
@@ -98,7 +150,7 @@ def convert_esx_counters_if(info):
     # }
     nics = by_item.keys()
     nics.sort()
-    
+
     converted = [
         [], #  0 ifIndex                   0
         [], #  1 ifDescr                   1
@@ -202,7 +254,7 @@ check_info['esx_vsphere_counters.if'] = {
 def inventory_esx_vsphere_counters_uptime(info):
     for name, instance, counter, unit in info:
         if name == "sys.uptime":
-            return [ (None, None) ]
+            return [ (None, {}) ]
 
 def check_esx_vsphere_counters_uptime(_no_item, params, info):
     for name, instance, counter, unit in info:
@@ -220,3 +272,55 @@ check_info['esx_vsphere_counters.uptime'] = {
    'group':                   'uptime',
 }
 
+#   .--Ramdisk-------------------------------------------------------------.
+#   |                ____                     _ _     _                    |
+#   |               |  _ \ __ _ _ __ ___   __| (_)___| | __                |
+#   |               | |_) / _` | '_ ` _ \ / _` | / __| |/ /                |
+#   |               |  _ < (_| | | | | | | (_| | \__ \   <                 |
+#   |               |_| \_\__,_|_| |_| |_|\__,_|_|___/_|\_\                |
+#   |                                                                      |
+#   +----------------------------------------------------------------------+
+
+# We assume that all ramdisks have the same size (in mb) on all hosts
+esx_vsphere_counters_ramdisk_sizes = {
+    'root':       32,
+    'etc':        28,
+    'tmp':        192,
+    'hostdstats': 319,
+    'snmptraps':  1,
+}
+
+def inventory_esx_vsphere_counters_ramdisk(info):
+    ramdisks = []
+    for name, instance, counter, unit in info:
+        if name == 'sys.resourceMemConsumed' \
+           and instance.startswith('host/system/kernel/kmanaged/visorfs/'):
+            ramdisks.append(instance.split('/')[-1])
+
+    return df_inventory(ramdisks)
+
+def check_esx_vsphere_counters_ramdisk(item, params, info):
+    ramdisks = []
+    for name, instance, counter, unit in info:
+        if name == 'sys.resourceMemConsumed' \
+           and instance.startswith('host/system/kernel/kmanaged/visorfs/'):
+            name     = instance.split('/')[-1]
+            try:
+                size_mb  = esx_vsphere_counters_ramdisk_sizes[name]
+            except KeyError:
+                return 3, 'Unhandled ramdisk found (%s)' % name
+            used_mb  = float(counter) / 1000
+            avail_mb = size_mb - used_mb
+            ramdisks.append((name, size_mb, avail_mb))
+
+    return df_check_filesystem_list(item, params, ramdisks)
+
+check_info['esx_vsphere_counters.ramdisk'] = {
+    'inventory_function':      inventory_esx_vsphere_counters_ramdisk,
+    'check_function':          check_esx_vsphere_counters_ramdisk,
+    'service_description':     'Ramdisk %s',
+    'has_perfdata':            True,
+    'includes':                [ 'df.include' ],
+    'group':                   'filesystem',
+    'default_levels_variable': 'filesystem_default_levels',
+}

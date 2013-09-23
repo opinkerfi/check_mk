@@ -1,9 +1,8 @@
-title: Monitor link status of Linux network interfaces (deprecated)
+title: Network interfaces on Linux: Link - DEPRECATED
 agents: linux
-author: Mathias Kettner <mk@mathias-kettner.de>
+catalog: os/networking
 license: GPL
 distribution: check_mk
 description:
- This check monitors the link status of Linux network interfaces.
+ This check is deprecated. Please use {lnx_if} instead.
 
- Note: this check is deprecated. Better use {lnx_if}.

@@ -24,7 +24,7 @@
 # to the Free Software Foundation, Inc., 51 Franklin St,  Fifth Floor,
 # Boston, MA 02110-1301 USA.
 
-import defaults, htmllib, config, userdb
+import defaults, config, userdb
 from lib import *
 from mod_python import apache
 import os, time
@@ -95,7 +95,7 @@ def renew_cookie(cookie_name, username, serial):
     # Do not renew if:
     # a) The _ajaxid var is set
     # b) A logout is requested
-    if (html.req.myfile != 'logout' or html.has_var('_ajaxid')) \
+    if (html.myfile != 'logout' or html.has_var('_ajaxid')) \
        and cookie_name == site_cookie_name():
         set_auth_cookie(username, serial)
 
@@ -126,8 +126,8 @@ def check_auth_cookie(cookie_name):
 def check_auth_automation():
     secret = html.var("_secret").strip()
     user = html.var("_username").strip()
-    del html.req.vars['_username']
-    del html.req.vars['_secret']
+    html.del_var('_username')
+    html.del_var('_secret')
     if secret and user and "/" not in user:
         path = defaults.var_dir + "/web/" + user + "/automation.secret"
         if os.path.isfile(path) and file(path).read().strip() == secret:
@@ -152,7 +152,7 @@ def check_auth():
             try:
                 return check_auth_cookie(cookie_name)
             except Exception, e:
-                #if html.debug:
+                #if html.enable_debug:
                 #    html.write('Exception occured while checking cookie %s' % cookie_name)
                 #    raise
                 #else:
@@ -183,30 +183,27 @@ def do_login():
             # False       -> failed
             result = userdb.hook_login(username, password)
             if result:
+                # use the username provided by the successful login function, this function
+                # might have transformed the username provided by the user. e.g. switched
+                # from mixed case to lower case.
                 username = result
+
+                # reset failed login counts
+                userdb.on_succeeded_login(username)
+
                 # The login succeeded! Now:
                 # a) Set the auth cookie
                 # b) Unset the login vars in further processing
                 # c) Show the real requested page (No redirect needed)
                 set_auth_cookie(username, load_serial(username))
 
-                # Use redirects for URLs or simply execute other handlers for
-                # mulitsite modules
-                if '/' in origtarget or '?' in origtarget:
-                    html.set_http_header('Location', origtarget)
-                    raise apache.SERVER_RETURN, apache.HTTP_MOVED_TEMPORARILY
-                else:
-                    # Remove login vars to hide them from the next page handler
-                    try:
-                        del html.req.vars['_username']
-                        del html.req.vars['_password']
-                        del html.req.vars['_login']
-                        del html.req.vars['_origtarget']
-                    except:
-                        pass
-
-                    return (username, origtarget)
+                # Never use inplace redirect handling anymore as used in the past. This results
+                # in some unexpected situations. We simpy use 302 redirects now. So we have a
+                # clear situation.
+                html.set_http_header('Location', origtarget)
+                raise apache.SERVER_RETURN, apache.HTTP_MOVED_TEMPORARILY
             else:
+                userdb.on_failed_login(username)
                 raise MKUserError(None, _('Invalid credentials.'))
         except MKUserError, e:
             html.add_user_error(e.varname, e.message)
@@ -231,13 +228,13 @@ def normal_login_page(called_directly = True):
     html.header(_("Check_MK Multisite Login"), javascripts=[], stylesheets=["pages", "login"])
 
     origtarget = html.var('_origtarget', '')
-    if not origtarget and not html.req.myfile in [ 'login', 'logout' ]:
+    if not origtarget and not html.myfile in [ 'login', 'logout' ]:
         origtarget = html.makeuri([])
 
     # When e.g. the password of a user is changed and the first frame that recognizes the
     # non matching cookies is the sidebar it redirects the user to side.py while removing
     # the frameset. This is not good. Instead of this redirect the user to the index page.
-    if html.req.myfile == 'side':
+    if html.myfile == 'side':
         html.immediate_browser_redirect(0.1, 'login.py')
         return apache.OK
 
@@ -248,41 +245,41 @@ def normal_login_page(called_directly = True):
 }''')
 
     # When someone calls the login page directly and is already authed redirect to main page
-    if html.req.myfile == 'login' and check_auth() != '':
+    if html.myfile == 'login' and check_auth() != '':
         html.immediate_browser_redirect(0.5, origtarget and origtarget or 'index.py')
         return apache.OK
 
-    html.write("<div id=login>")
-    html.write("<img id=login_window src=\"images/login_window.png\">")
-    html.write("<div id=version>%s</div>" % defaults.check_mk_version)
+    html.write('<div id="login">\n')
+    html.write('<img id="login_window" src="images/login_window.png" />\n')
+    html.write('<div id="version">%s</div>\n' % defaults.check_mk_version)
 
-    html.begin_form("login", method = 'POST', add_transid = False)
+    html.begin_form("login", method = 'POST', add_transid = False, action = 'login.py')
     html.hidden_field('_login', '1')
-    html.hidden_field('_origtarget', htmllib.attrencode(origtarget))
-    html.write("<label id=label_user class=legend for=_username>%s:</label><br />" % _('Username'))
+    html.hidden_field('_origtarget', html.attrencode(origtarget))
+    html.write('<label id="label_user" class="legend" for="_username">%s:</label><br />\n' % _('Username'))
     html.text_input("_username", id="input_user")
-    html.write("<label id=label_pass class=legend for=_password>%s:</label><br />" % _('Password'))
+    html.write('<label id="label_pass" class="legend" for="_password">%s:</label><br />\n' % _('Password'))
     html.password_input("_password", id="input_pass", size=None)
 
     if html.has_user_errors():
-        html.write('<div id=login_error>')
+        html.write('<div id="login_error">')
         html.show_user_errors()
-        html.write('</div>')
+        html.write('</div>\n')
 
-    html.write("<div id=button_text>")
+    html.write('<div id="button_text">')
     html.image_button("_login", _('Login'))
-    html.write("</div>")
+    html.write("</div>\n")
 
-    html.write("<div id=foot>Version: %s - &copy; "
-               "<a href=\"http://mathias-kettner.de\">Mathias Kettner</a><br><br>" % defaults.check_mk_version)
-    html.write(_("You can use, modify and distribute Check_MK under the terms of the <a href='%s'>"
-                 "GNU GPL Version 2</a>." % "http://mathias-kettner.de/gpl.html"))
-    html.write("</div>")
+    html.write('<div id="foot">Version: %s - &copy; '
+               '<a href="http://mathias-kettner.de">Mathias Kettner</a><br /><br />' % defaults.check_mk_version)
+    html.write(_('You can use, modify and distribute Check_MK under the terms of the <a href="%s">'
+                 'GNU GPL Version 2</a>.' % "http://mathias-kettner.de/gpl.html"))
+    html.write("</div>\n")
 
-    html.write("</div>")
     html.set_focus('_username')
     html.hidden_fields()
     html.end_form()
+    html.write("</div>\n")
 
     html.footer()
     return apache.OK

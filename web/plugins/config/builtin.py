@@ -33,12 +33,14 @@
 roles = {} # User supplied roles
 
 # define default values for all settings
-debug             = False
-profile           = False
-users             = []
-admin_users       = []
-guest_users       = []
-default_user_role = "user"
+debug                  = False
+profile                = False
+users                  = []
+admin_users            = []
+guest_users            = []
+default_user_role      = "user"
+save_user_access_times = False
+user_online_maxage     = 30 # seconds
 
 # New style, used by WATO
 multisite_users = {}
@@ -58,6 +60,15 @@ sidebar = [
     ('admin',             'open'),
     ('master_control',    'closed')
 ]
+
+# Interval of snapin updates in seconds
+sidebar_update_interval = 30.0
+
+# It is possible (but ugly) to enable a scrollbar in the sidebar
+sidebar_show_scrollbar = False
+
+# Enable regular checking for popup notifications
+sidebar_notify_interval = None
 
 #    _     _           _ _
 #   | |   (_)_ __ ___ (_) |_ ___
@@ -123,6 +134,9 @@ debug_livestatus_queries = False
 # not reachable.
 show_livestatus_errors = True
 
+# Whether the livestatu proxy daemon is available
+liveproxyd_enabled = False
+
 # Set this to a list in order to globally control which views are
 # being displayed in the sidebar snapin "Views"
 visible_views = None
@@ -141,9 +155,6 @@ page_heading = "Check_MK %s"
 
 # Timeout for rescheduling of host- and servicechecks
 reschedule_timeout = 10.0
-
-# Interval of snapin updates in seconds
-sidebar_update_interval = 30.0
 
 # Number of columsn in "Filter" form
 filter_columns = 2
@@ -174,6 +185,23 @@ selection_livetime  = 3600
 # Configure HTTP header to read usernames from
 auth_by_http_header = False
 
+# Number of rows to display by default in tables rendered with
+# the table.py module
+table_row_limit = 100
+
+# Add an icon pointing to the WATO rule to each service
+multisite_draw_ruleicon = False
+
+# Default downtime configuration
+adhoc_downtime = {}
+
+# Display dashboard date
+pagetitle_date_format = None
+
+# Value of the host_staleness/service_staleness field to make hosts/services
+# appear in a stale state
+staleness_threshold = 1.5
+
 #     _   _               ____  ____
 #    | | | |___  ___ _ __|  _ \| __ )
 #    | | | / __|/ _ \ '__| | | |  _ \
@@ -181,13 +209,15 @@ auth_by_http_header = False
 #     \___/|___/\___|_|  |____/|____/
 #
 
-user_connectors      = ['htpasswd']
-ldap_connection      = {}
-ldap_userspec        = {}
-ldap_groupspec       = {}
-ldap_active_plugins  = {'email': {}, 'alias': {}, 'auth_expire': {}}
-ldap_cache_livetime  = 300
-ldap_debug_log       = None
-default_user_profile = {
+user_connectors       = ['htpasswd']
+userdb_automatic_sync = [ 'wato_users', 'page' ]
+ldap_connection       = {}
+ldap_userspec         = {}
+ldap_groupspec        = {}
+ldap_active_plugins   = {'email': {}, 'alias': {}, 'auth_expire': {}}
+ldap_cache_livetime   = 300
+ldap_debug_log        = None
+default_user_profile  = {
     'roles': ['user'],
 }
+lock_on_logon_failures = False

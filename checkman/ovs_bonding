@@ -1,6 +1,6 @@
-title: Check state of Bonding network interface on Open vSwitch
+title: State of Bonding network interface on Open vSwitch
 agents: linux
-author: Mathias Kettner <mk@mathias-kettner.de>
+catalog: os/networking
 license: GPL
 distribution: check_mk
 description:

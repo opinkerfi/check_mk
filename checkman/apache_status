@@ -1,6 +1,6 @@
-title: Check performance indicators of Apache web server
+title: Performance indicators of Apache web server
 agents: linux
-author: Lars Michelsen <lm@mathias-kettner.de>
+catalog: app/apache
 license: GPL
 distribution: check_mk
 description:
@@ -16,8 +16,24 @@ description:
  The plugin tries to autodetect all running apache servers. If that fails
  for some reason you need to create the configuration file
  {/etc/check_mk/apache_status.cfg} and list your servers here. Write
- a Python list of triples of protocol, servername and port. Here is
- an example: {servers = [('http', 'localhost', 80),('https', 'localhost', 443)]}.
+ a Python list of dicts for protocol, servername and port.
+ With the optional item 'page' its posible to change the status page from server-status to a
+ name you want
+
+examples:
+ servers = [
+ {
+  'protocol' : 'http',
+  'address'  : 'localhost',
+  'port'     : 80 ,
+ },
+ {
+  'protocol' : 'https',
+  'address'  : 'localhost',
+  'port'     : 443 ,
+  'page'     : 'server-status-2',
+ },
+ ]
 
 inventory:
  One service per Apache server will be created.
@@ -30,6 +46,10 @@ perfdata:
  purpose of the check. Please look at the shipped PNP template for
  details.
 
+[parameters]
+parameters(dict): a dictionary with the optional key
+
+ {"OpenSlots"} : (int, int) -  warn/crit levels for the number of remaining open slots
 
 
 

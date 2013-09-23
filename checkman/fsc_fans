@@ -1,6 +1,6 @@
-title: Check physical FAN status of Fujitsu Siemens (FSC) Hardware
+title: FANs of Fujitsu Siemens (FSC) Servers using ServerView Agent
 agents: snmp
-author: Mathias Kettner <mk@mathias-kettner.de>
+catalog: hw/server/fujitsu
 license: GPL
 distribution: check_mk
 description:

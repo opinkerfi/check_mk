@@ -1,6 +1,6 @@
-title: Check for bays in an IBM blade center
+title: IBM Blade Center: Bays
 agents: snmp
-author: Mathias Kettner <mk@mathias-kettner.de>
+catalog: hw/server/ibm
 license: GPL
 distribution: check_mk
 description:

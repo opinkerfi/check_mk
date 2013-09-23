@@ -25,6 +25,8 @@
 #include <fcntl.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <string.h>
+
 #include "Logfile.h"
 #include "logger.h"
 #include "LogEntry.h"
@@ -83,6 +85,8 @@ void Logfile::flush()
 
 void Logfile::load(LogCache *logcache, time_t since, time_t until, unsigned logclasses)
 {
+    // HIER KOENNTE ICH FLUSHEN, WENN g_active_world nicht mehr stimmt
+
     unsigned missing_types = logclasses & ~_logclasses_read;
     FILE *file = 0;
     // The current logfile has the _watch flag set to true.
@@ -136,6 +140,7 @@ void Logfile::load(LogCache *logcache, time_t since, time_t until, unsigned logc
 void Logfile::loadRange(FILE *file, unsigned missing_types,
         LogCache *logcache, time_t since, time_t until, unsigned logclasses)
 {
+    //logger(LOG_NOTICE, "Read logfile: %s", this->_path);
     while (fgets(_linebuffer, MAX_LOGLINE, file))
     {
         _lineno++;
@@ -162,9 +167,9 @@ long Logfile::freeMessages(unsigned logclasses)
     return freed;
 }
 
-bool Logfile::processLogLine(uint32_t lineno, unsigned logclasses)
+inline bool Logfile::processLogLine(uint32_t lineno, unsigned logclasses)
 {
-    LogEntry *entry = new LogEntry(lineno, _linebuffer);
+    LogEntry *entry = new LogEntry(lineno, _linebuffer, logclasses);
     // ignored invalid lines
     if (entry->_logclass == LOGCLASS_INVALID) {
         delete entry;

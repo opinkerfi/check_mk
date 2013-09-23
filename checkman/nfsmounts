@@ -1,6 +1,6 @@
-title: Check health of NFS mounts
+title: Health of NFS mounts
 agents: linux
-author: Mathias Kettner <mk@mathias-kettner.de>
+catalog: os/services
 license: GPL
 distribution: check_mk
 description:

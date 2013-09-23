@@ -1,6 +1,6 @@
-title: Monitors temperature of HDDs using S.M.A.R.T
-agents: snmp
-author: Benjamin Odenthal <benjamin.odenthal@tuxclouds.org>, Lars Michelsen <lm@mathias-kettner.de>
+title: Temperature of HDDs using S.M.A.R.T
+agents: linux
+catalog: os/hardware
 license: GPL
 distribution: check_mk
 description:

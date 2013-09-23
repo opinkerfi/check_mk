@@ -1,6 +1,6 @@
-title: Check number of processes on OpenVMS
+title: Number of processes on OpenVMS
 agents: openvms
-author: Mathias Kettner <mk@mathias-kettner.de>
+catalog: os/ps
 license: GPL
 distribution: check_mk
 description:

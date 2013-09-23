@@ -1,6 +1,6 @@
-title: Fortigate memory levels
+title: FortiGate firewalls: RAM Usage
 agents: snmp
-author: Bastian Kuhn <bk@mathias-kettner.de>
+catalog: hw/network/fortinet
 license: GPL
 distribution: check_mk
 description:

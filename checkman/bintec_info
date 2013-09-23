@@ -1,6 +1,6 @@
 title: Retrieve informational SNMP data about bintec routers
 agents: snmp
-author: Lars Michelsen <lm@mathias-kettner.de
+catalog: hw/network/bintec
 license: GPL
 distribution: check_mk
 description:

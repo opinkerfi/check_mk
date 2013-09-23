@@ -1,6 +1,6 @@
-title: Check ZFS Storage Pool status
+title: ZFS Storage Pool status
 agents: solaris
-author: Darin Perusich <darin@darins.net>
+catalog: os/storage
 license: GPL
 distribution: check_mk
 description:

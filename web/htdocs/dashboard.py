@@ -24,7 +24,7 @@
 # to the Free Software Foundation, Inc., 51 Franklin St,  Fifth Floor,
 # Boston, MA 02110-1301 USA.
 
-import config, defaults, htmllib, pprint, time
+import config, defaults, pprint, time
 from lib import *
 import wato
 
@@ -96,9 +96,9 @@ def add_wato_folder_to_url(url, wato_folder):
     elif '/' in url:
         return url # do not append wato_folder to non-Check_MK-urls
     elif '?' in url:
-        return url + "&wato_folder=" + htmllib.urlencode(wato_folder)
+        return url + "&wato_folder=" + html.urlencode(wato_folder)
     else:
-        return url + "?wato_folder=" + htmllib.urlencode(wato_folder)
+        return url + "?wato_folder=" + html.urlencode(wato_folder)
 
 
 # Actual rendering function
@@ -227,7 +227,7 @@ def render_dashlet(nr, dashlet, wato_folder):
             url = 'about:blank'
 
         # Fix of iPad >:-P
-        html.write('<div style="width: 100%; height: 100%; -webkit-overflow-scrolling:touch; overflow: auto;">')
+        html.write('<div style="width: 100%; height: 100%; -webkit-overflow-scrolling:touch; overflow: hidden;">')
         html.write('<iframe id="dashlet_iframe_%d" allowTransparency="true" frameborder="0" width="100%%" '
                    'height="100%%" src="%s"> </iframe>' % (nr, url))
         html.write('</div>')
@@ -475,7 +475,7 @@ def dashlet_hoststats():
     ]
     filter = "Filter: custom_variable_names < _REALNAME\n"
 
-    render_statistics("hoststats", "hosts", table, filter)
+    render_statistics(html.var('id', "hoststats"), "hosts", table, filter)
 
 def dashlet_servicestats():
     table = [
@@ -530,7 +530,7 @@ def dashlet_servicestats():
     ]
     filter = "Filter: host_custom_variable_names < _REALNAME\n"
 
-    render_statistics("servicestats", "services", table, filter)
+    render_statistics(html.var('id', "servicestats"), "services", table, filter)
 
 
 def render_statistics(pie_id, what, table, filter):
@@ -576,7 +576,7 @@ def render_statistics(pie_id, what, table, filter):
     table_entries.append(((_("Total"), "", "all%s" % what, ""), total))
     for (name, color, viewurl, query), count in table_entries:
         url = "view.py?view_name=" + viewurl + "&filled_in=filter&search=1&wato_folder=" \
-              + htmllib.urlencode(html.var("wato_folder", ""))
+              + html.urlencode(html.var("wato_folder", ""))
         if host_contact_group:
             url += '&opthost_contactgroup=' + host_contact_group
         if service_contact_group:
@@ -684,5 +684,3 @@ def render_pnpgraph(site, host, service = None, source = 0, view = 0):
     pnp_url = base_url + "graph" + var_part
     img_url = base_url + "image" + var_part
     html.write('<a href="%s"><img border=0 src="%s"></a>' % (pnp_url, img_url))
-
-# load_plugins()

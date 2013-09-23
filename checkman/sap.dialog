@@ -1,6 +1,6 @@
 title: SAP Dialog Statistics Monitoring
 agents: linux
-author: Lars Michelsen <lm@mathias-kettner.de>
+catalog: app/sap
 license: GPL
 distribution: check_mk
 description:

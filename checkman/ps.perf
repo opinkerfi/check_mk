@@ -1,11 +1,15 @@
-title: Check for running process and send additional performance data
+title: State and Count of Processes (with additional performance data)
 agents: linux
-author: Mathias Kettner <mk@mathias-kettner.de>
+catalog: os/ps
 license: GPL
 distribution: check_mk
 description:
  This check does exactly the same as {ps}, but in addition
  outputs performance data. Please refer to the manpage of {ps} for more details.
+
+ Note: If you want to use {ps.perf} on Windows systems then you need to install
+ the plugin {psperf.bat} into the {plugins} directory of you Windows agent.
+ Do not use {wmicchecks.bat}. This is obsolete.
 
 perfdata:
  In all cases the number of matching running processes found on the target
@@ -24,6 +28,8 @@ inventory:
 
 [parameters]
 params (5 or 6 tuple): Please refer to {ps} for information about the parameters.
+parameters (dict): or the parameters can be given in the new, dictionary based syntax.
+   Please refer to {ps} for information about the parameters.
 
 [configuration]
 inventory_processes_perf (list): A list of 7-tuples. See {ps} for details.

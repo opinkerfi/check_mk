@@ -1,6 +1,6 @@
-title: Database size check for PostgreSQL
+title: Database Size for PostgreSQL
 agents: linux
-author: Mathias Kettner <mk@mathias-kettner.de>
+catalog: app/postgresql
 license: GPL
 distribution: check_mk
 description:

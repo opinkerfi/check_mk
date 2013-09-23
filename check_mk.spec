@@ -43,7 +43,7 @@ This package is only needed on the Nagios server.
 
 %package agent
 Group:     System/Monitoring
-Requires:  xinetd
+Requires:  xinetd, time
 Summary: Linux-Agent for check_mk
 AutoReq:   off
 AutoProv:  off
@@ -55,7 +55,7 @@ xinetd to run this agent.
 
 %package agent-scriptless
 Group:     System/Monitoring
-Requires:  xinetd
+Requires:  xinetd, time
 Summary: Linux-Agent for check_mk
 AutoReq:   off
 AutoProv:  off
@@ -69,7 +69,7 @@ own.
 
 %package caching-agent
 Group:     System/Monitoring
-Requires:  xinetd
+Requires:  xinetd, time
 Summary: Caching Linux-Agent for check_mk
 AutoReq:   off
 AutoProv:  off
@@ -138,6 +138,7 @@ install -m 755 $R/usr/share/check_mk/agents/mk-job $R/usr/bin
 mkdir -p $R/usr/lib/check_mk_agent/plugins
 mkdir -p $R/usr/lib/check_mk_agent/local
 mkdir -p $R/var/lib/check_mk_agent
+mkdir -p $R/var/lib/check_mk_agent/job
 
 # logwatch and oracle extension
 install -m 755 $R/usr/share/check_mk/agents/plugins/mk_logwatch $R/usr/lib/check_mk_agent/plugins
@@ -188,6 +189,7 @@ rm -rf $RPM_BUILD_ROOT
 %dir /usr/lib/check_mk_agent/local
 %dir /usr/lib/check_mk_agent/plugins
 %dir /var/lib/check_mk_agent
+%dir %attr(1777,-,-)/var/lib/check_mk_agent/job
 
 %files agent-scriptless
 %config(noreplace) /etc/xinetd.d/check_mk
@@ -198,6 +200,7 @@ rm -rf $RPM_BUILD_ROOT
 %dir /usr/lib/check_mk_agent/local
 %dir /usr/lib/check_mk_agent/plugins
 %dir /var/lib/check_mk_agent
+%dir %attr(1777,-,-)/var/lib/check_mk_agent/job
 
 %files caching-agent
 %config(noreplace) /etc/xinetd.d/check_mk_caching
@@ -210,6 +213,7 @@ rm -rf $RPM_BUILD_ROOT
 %dir /usr/lib/check_mk_agent/plugins
 %dir /etc/check_mk
 %dir /var/lib/check_mk_agent
+%dir %attr(1777,-,-)/var/lib/check_mk_agent/job
 
 %files agent-logwatch
 /usr/lib/check_mk_agent/plugins/mk_logwatch

@@ -158,11 +158,21 @@ def automation_try_inventory(args):
                         services.append(entry)
                         already_added.add((entry[1], entry[6])) # make it unique
 
+        # Find manual checks for this cluster
+        cluster_checks = get_check_table(hostname)
+        for (ct, item), (params, descr, deps) in cluster_checks.items():
+            if (ct, descr) not in already_added:
+                services.append(("manual", ct, None, item, repr(params), params, descr, 0, "", None))
+                already_added.add( (ct, descr) ) # make it unique
+
     else:
         new_services = automation_try_inventory_node(hostname)
         for entry in new_services:
-            if host_of_clustered_service(hostname, entry[6]) == hostname:
+            host = host_of_clustered_service(hostname, entry[6])
+            if host == hostname:
                 services.append(entry)
+            else:
+                services.append(("clustered",) + entry[1:])
 
     return services
 
@@ -191,13 +201,14 @@ def automation_try_inventory_node(hostname):
                     if cn in existing_checks:
                         found_services += make_inventory(cn, [hostname], True, True)
             else:
-                sys_descr = get_single_oid(hostname, ipaddress, ".1.3.6.1.2.1.1.1.0")
-                if sys_descr != None:
-                    found_services = do_snmp_scan([hostname], True, True)
-                else:
-                    raise MKSNMPError("Cannot get system description via SNMP. "
-                                      "SNMP agent is not responding. Probably wrong "
-                                      "community or wrong SNMP version.")
+                if not in_binary_hostlist(hostname, snmp_without_sys_descr):
+                    sys_descr = get_single_oid(hostname, ipaddress, ".1.3.6.1.2.1.1.1.0")
+                    if sys_descr == None:
+                        raise MKSNMPError("Cannot get system description via SNMP. "
+                                          "SNMP agent is not responding. Probably wrong "
+                                          "community or wrong SNMP version.")
+
+                found_services = do_snmp_scan([hostname], True, True)
 
         except Exception, e:
             if not dual_host:
@@ -205,7 +216,9 @@ def automation_try_inventory_node(hostname):
             snmp_error = str(e)
 
     tcp_error = None
-    if is_tcp_host(hostname):
+    # Honor piggy_back data, even if host is not declared as TCP host
+    if is_tcp_host(hostname) or \
+           get_piggyback_info(hostname) or get_piggyback_info(ipaddress):
         try:
             for cn in inventorable_checktypes("tcp"):
                 found_services += make_inventory(cn, [hostname], True, True)
@@ -239,6 +252,11 @@ def automation_try_inventory_node(hostname):
     for cmd, descr, perf in legchecks:
         found[('legacy', descr)] = ( 'legacy', 'None' )
 
+    # Add custom checks and active checks with artificial type 'custom'
+    custchecks = host_extra_conf(hostname, custom_checks)
+    for entry in custchecks:
+        found[('custom', entry['service_description'])] = ( 'custom', 'None' )
+
     # Similar for 'active_checks', but here we have parameters
     for acttype, rules in active_checks.items():
         act_info = active_check_info[acttype]
@@ -247,12 +265,20 @@ def automation_try_inventory_node(hostname):
             descr = act_info["service_description"](params)
             found[(acttype, descr)] = ( 'active', repr(params) )
 
-
     # Collect current status information about all existing checks
     table = []
     for (ct, item), (state_type, paramstring) in found.items():
         params = None
-        if state_type not in [ 'legacy', 'active' ]:
+        if state_type not in [ 'legacy', 'active', 'custom' ]:
+            # apply check_parameters
+            try:
+                if type(paramstring) == str:
+                    params = eval(paramstring)
+                else:
+                    params = paramstring
+            except:
+                raise MKAutomationError("Invalid check parameter string '%s'" % paramstring)
+
             descr = service_description(ct, item)
             global g_service_description
             g_service_description = descr
@@ -290,14 +316,6 @@ def automation_try_inventory_node(hostname):
 
             if exitcode == None:
                 check_function = check_info[ct]["check_function"]
-                # apply check_parameters
-                try:
-                    if type(paramstring) == str:
-                        params = eval(paramstring)
-                    else:
-                        params = paramstring
-                except:
-                    raise MKAutomationError("Invalid check parameter string '%s'" % paramstring)
                 if state_type != 'manual':
                     params = compute_check_parameters(hostname, ct, item, params)
 
@@ -313,16 +331,19 @@ def automation_try_inventory_node(hostname):
         else:
             descr = item
             exitcode = None
-            output = "WAITING - Legacy check, cannot be done offline"
+            output = "WAITING - %s check, cannot be done offline" % state_type.title()
             perfdata = []
 
         if state_type == "active":
             params = eval(paramstring)
 
-        if state_type in [ "legacy", "active" ]:
+        if state_type in [ "legacy", "active", "custom" ]:
             checkgroup = None
+            if service_ignored(hostname, None, descr):
+                state_type = "ignored"
         else:
             checkgroup = check_info[ct]["group"]
+
         table.append((state_type, ct, checkgroup, item, paramstring, params, descr, exitcode, output, perfdata))
 
     if not table and (tcp_error or snmp_error):
@@ -345,23 +366,39 @@ def automation_try_inventory_node(hostname):
 def automation_set_autochecks(args):
     hostname = args[0]
     new_items = eval(sys.stdin.read())
-
     do_cleanup_autochecks()
-    existing = automation_parse_autochecks_file(hostname)
 
-    # write new autochecks file, but take paramstrings from existing ones
-    # for those checks which are kept
-    new_autochecks = []
-    for ct, item, params, paramstring in existing:
-        if (ct, item) in new_items:
+    # A Cluster does not have an autochecks file
+    # All of its services are located in the nodes instead
+    # So we cycle through all nodes remove all clustered service
+    # and add the ones we've got from stdin
+    if is_cluster(hostname):
+        for node in nodes_of(hostname):
+            new_autochecks = []
+            existing = automation_parse_autochecks_file(node)
+            for ct, item, params, paramstring in existing:
+                descr = service_description(ct, item)
+                if node == host_of_clustered_service(node, descr):
+                    new_autochecks.append((ct, item, paramstring))
+            for (ct, item), paramstring in new_items.items():
+                new_autochecks.append((ct, item, paramstring))
+            # write new autochecks file for that host
+            automation_write_autochecks_file(node, new_autochecks)
+    else:
+        existing = automation_parse_autochecks_file(hostname)
+        # write new autochecks file, but take paramstrings from existing ones
+        # for those checks which are kept
+        new_autochecks = []
+        for ct, item, params, paramstring in existing:
+            if (ct, item) in new_items:
+                new_autochecks.append((ct, item, paramstring))
+                del new_items[(ct, item)]
+
+        for (ct, item), paramstring in new_items.items():
             new_autochecks.append((ct, item, paramstring))
-            del new_items[(ct, item)]
 
-    for (ct, item), paramstring in new_items.items():
-        new_autochecks.append((ct, item, paramstring))
-
-    # write new autochecks file for that host
-    automation_write_autochecks_file(hostname, new_autochecks)
+        # write new autochecks file for that host
+        automation_write_autochecks_file(hostname, new_autochecks)
 
 
 def automation_get_autochecks(args):
@@ -461,11 +498,17 @@ def automation_restart(job="restart"):
     # check_mk is called by WATO via Apache. Nagios inherits
     # the open file where Apache is listening for incoming
     # HTTP connections. Really.
-    for fd in range(3, 256):
-        try:
-            os.close(fd)
-        except:
-            pass
+    if monitoring_core == "nagios":
+        objects_file = nagios_objects_file
+        for fd in range(3, 256):
+            try:
+                os.close(fd)
+            except:
+                pass
+    else:
+        objects_file = var_dir + "/core/config"
+        job = "reload" # force reload for CMC
+
     # os.closerange(3, 256) --> not available in older Python versions
 
     class null_file:
@@ -480,40 +523,50 @@ def automation_restart(job="restart"):
 
     try:
         backup_path = None
-        if not lock_nagios_objects_file():
+        if not lock_objects_file():
             raise MKAutomationError("Cannot activate changes. "
                   "Another activation process is currently in progresss")
-        if os.path.exists(nagios_objects_file):
-            backup_path = nagios_objects_file + ".save"
-            os.rename(nagios_objects_file, backup_path)
+
+        if os.path.exists(objects_file):
+            backup_path = objects_file + ".save"
+            os.rename(objects_file, backup_path)
         else:
             backup_path = None
 
         try:
-	    create_nagios_config(file(nagios_objects_file, "w"))
+            if monitoring_core == "nagios":
+                create_nagios_config(file(objects_file, "w"))
+            else:
+                do_create_cmc_config(opt_cmc_relfilename)
+
         except Exception, e:
 	    if backup_path:
-		os.rename(backup_path, nagios_objects_file)
+		os.rename(backup_path, objects_file)
+            if opt_debug:
+                raise
 	    raise MKAutomationError("Error creating configuration: %s" % e)
 
         if do_check_nagiosconfig():
             if backup_path:
                 os.remove(backup_path)
-            do_precompile_hostchecks()
+            if monitoring_core != "cmc":
+                do_precompile_hostchecks()
             if job == 'restart':
-                do_restart_nagios(False)
+                do_restart_core(False)
             elif job == 'reload':
-                do_restart_nagios(True)
+                do_restart_core(True)
         else:
             if backup_path:
-                os.rename(backup_path, nagios_objects_file)
+                os.rename(backup_path, objects_file)
             else:
-                os.remove(nagios_objects_file)
-            raise MKAutomationError("Nagios configuration is invalid. Rolling back.")
+                os.remove(objects_file)
+            raise MKAutomationError("Configuration for monitoring core is invalid. Rolling back.")
 
     except Exception, e:
         if backup_path and os.path.exists(backup_path):
             os.remove(backup_path)
+        if opt_debug:
+            raise
         raise MKAutomationError(str(e))
 
     sys.stdout = old_stdout
@@ -540,6 +593,7 @@ def automation_get_check_information():
         checks[check_type] = { "title" : title }
         if check["group"]:
             checks[check_type]["group"] = check["group"]
+        checks[check_type]["service_description"] = check.get("service_description","%s")
         checks[check_type]["snmp"] = check_uses_snmp(check_type)
     return checks
 

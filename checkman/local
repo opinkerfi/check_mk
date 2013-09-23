@@ -1,6 +1,6 @@
 title: Integrate custom checks
-agents: linux, aix, solaris
-author: Mathias Kettner <mk@mathias-kettner.de>
+agents: linux, windows, aix, solaris, freebsd, netbsd, openbsd
+catalog: generic
 license: GPL
 distribution: check_mk
 description:

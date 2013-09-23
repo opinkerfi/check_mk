@@ -25,7 +25,6 @@
 # Boston, MA 02110-1301 USA.
 
 import config, re, pprint, time, views
-import weblib, htmllib
 from lib import *
 
 
@@ -254,6 +253,9 @@ def compile_forest(user, only_hosts = None, only_groups = None):
         used_cache = True
         return # In this case simply skip further compilations
 
+    if not config.aggregations and not config.host_aggregations:
+        return # nothing to do, BI not used
+
     # If we have previously only partly compiled and now there is no
     # filter, then throw away partly compiled data.
     if (cache["compiled_hosts"] or cache["compiled_groups"]) \
@@ -319,7 +321,7 @@ def compile_forest(user, only_hosts = None, only_groups = None):
                 continue
 
             if len(entry) < 3:
-                raise MKConfigError(_("<h1>Invalid aggregation <tt>%s</tt>'</h1>"
+                raise MKConfigError(_("<h1>Invalid aggregation <tt>%s</tt></h1>"
                                       "Must have at least 3 entries (has %d)") % (entry, len(entry)))
 
             if type(entry[0]) == list:
@@ -1335,9 +1337,9 @@ def ajax_save_treestate():
     saved_ex_level = load_ex_level()
 
     if saved_ex_level != current_ex_level:
-        weblib.set_tree_states('bi', {})
-    weblib.set_tree_state('bi', path, html.var("state") == "open")
-    weblib.save_tree_states()
+        html.set_tree_states('bi', {})
+    html.set_tree_state('bi', path, html.var("state") == "open")
+    html.save_tree_states()
 
     save_ex_level(current_ex_level)
 
@@ -1380,11 +1382,11 @@ def ajax_render_tree():
 
 def render_tree_foldable(row, boxes, omit_root, expansion_level, only_problems, lazy):
     saved_expansion_level = load_ex_level()
-    treestate = weblib.get_tree_states('bi')
+    treestate = html.get_tree_states('bi')
     if expansion_level != saved_expansion_level:
         treestate = {}
-        weblib.set_tree_states('bi', treestate)
-        weblib.save_tree_states()
+        html.set_tree_states('bi', treestate)
+        html.save_tree_states()
 
     def render_subtree(tree, path, show_host):
         is_leaf = len(tree) == 3
@@ -1475,7 +1477,7 @@ def render_tree_foldable(row, boxes, omit_root, expansion_level, only_problems, 
     affected_hosts = row["aggr_hosts"]
     title = row["aggr_tree"]["title"]
     group = row["aggr_group"]
-    url_id = htmllib.urlencode_vars([
+    url_id = html.urlencode_vars([
         ( "group", group ),
         ( "title", title ),
         ( "omit_root", omit_root and "yes" or ""),
@@ -1484,7 +1486,7 @@ def render_tree_foldable(row, boxes, omit_root, expansion_level, only_problems, 
         ( "reqhosts", ",".join('%s#%s' % sitehost for sitehost in affected_hosts) ),
     ])
 
-    htmlcode = '<div id="%s" class=bi_tree_container>' % htmllib.attrencode(url_id) + \
+    htmlcode = '<div id="%s" class=bi_tree_container>' % html.attrencode(url_id) + \
                render_subtree(tree, [tree[2]["title"]], len(affected_hosts) > 1) + \
                '</div>'
     return "aggrtree" + (boxes and "_box" or ""), htmlcode

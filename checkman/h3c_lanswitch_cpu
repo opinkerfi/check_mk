@@ -1,6 +1,6 @@
-title: Check CPU utilization of 3COM and H3C switches
+title: 3COM and H3C switches: CPU utilization
 agents: snmp
-author: Florian Heigl <fh@mathias-kettner.de>
+catalog: hw/network/h3c
 license: GPL
 distribution: check_mk
 description:

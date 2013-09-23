@@ -1,6 +1,6 @@
-title: Check length of MS Exchange queues
+title: Length of MS Exchange queues
 agents: windows
-author: Mathias Kettner <mk@mathias-kettner.de>
+catalog: app/exchange
 license: GPL
 distribution: check_mk
 description:

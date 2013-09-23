@@ -1,0 +1,51 @@
+title: Number of Requests
+agents: linux
+catalog: app/java
+license: GPL
+distribution: check_mk
+description:
+ This check allows to monitor the number of requests on web application servers.
+
+ To use this check, Jolokia and the {mk_jolokia} agent plugin need to be installed
+ on the monitored server.
+
+ The check returns {WARN}/{CRIT} if the number of requests is outside the given
+ ranges.
+
+item:
+ The name of the application server instance as configured by the agent.
+
+examples:
+ # Number of requests low crit, low warn, high warn, high crit
+ jolokia_metrics_serv_req_default_levels = (-1, -1, 5000, 6000)
+
+ checks += [
+    # set warning level to 10.000 requests and crit to 12.000
+    # for instance ExampleServer on machine appserver1
+    ( "appserver1", "jolokia_metrics.serv_req", "ExampleServer", (-1, -1, 10000, 12000) ),
+ ]
+
+perfdata:
+ One value: The number of requests.
+
+inventory:
+ One check is created for each Jolokia instance sent by the agent.
+
+[parameters]
+lo_crit(int): Return {CRIT} if number of requests is lower or equal than
+  this value.
+
+lo_warn(int): Return {WARN} if number of requests is lower or equal than
+  this value.
+
+hi_warn(int): Return {WARN} if number of requests is higher or equal than
+  this value.
+
+hi_crit(int): Return {CRIT} if number of requests is higher or equal than
+  this value.
+
+[configuration]
+jolokia_metrics_serv_req_default_levels(int, int, int, int):
+ The default levels to be used for inventorized checks for
+ low crit, low warn, high warn, high crit.
+ They are preset to {(-1, -1, 5000, 6000)}

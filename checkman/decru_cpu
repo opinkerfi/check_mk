@@ -1,6 +1,6 @@
-title: Monitor CPU utilization of DECRU NAS
+title: DECRU NAS: CPU utilization
 agents: snmp
-author: Mathias Kettner <mk@mathias-kettner.de>
+catalog: hw/network/decru
 license: GPL
 distribution: check_mk
 description:

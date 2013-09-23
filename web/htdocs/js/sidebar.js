@@ -26,9 +26,8 @@ var browser         = navigator.userAgent.toLowerCase();
 var weAreIEF__k     = ((browser.indexOf("msie") != -1) && (browser.indexOf("opera") == -1));
 var weAreOpera      = browser.indexOf("opera") != -1;
 var weAreFirefox    = browser.indexOf("firefox") != -1 || browser.indexOf("namoroka") != -1;
-var contentLocation = null;
-if(contentFrameAccessible())
-    var contentLocation = parent.frames[1].document.location;
+var g_orig_title    = null;
+var g_content_loc   = null;
 
 //
 // Sidebar styling and scrolling stuff
@@ -360,6 +359,47 @@ function contentFrameAccessible() {
     }
 }
 
+function update_content_location() {
+    // init the original frameset title
+    if (g_orig_title == null) {
+        g_orig_title = window.parent.document.title;
+    }
+
+    var content_frame = window.parent.frames[1];
+
+    // Change the title to add the right frame title to reflect the
+    // title of the content URL in the framesets title (window title or tab title)
+    if (content_frame.document.title != '') {
+        var page_title = g_orig_title + ' - ' + content_frame.document.title;
+    } else {
+        var page_title = g_orig_title;
+    }
+    window.parent.document.title = page_title;
+
+    // Construct the URL to be called on page reload
+    var parts = window.parent.location.pathname.split('/')
+    parts.pop();
+    var cmk_path = parts.join('/');
+    var rel_url = content_frame.location.pathname + content_frame.location.search + content_frame.location.hash
+    var index_url = cmk_path + '/index.py?start_url=' + encodeURIComponent(rel_url);
+
+    if (window.parent.history.replaceState) {
+        if (rel_url && rel_url != 'blank') {
+            // Update the URL to be called on reload, e.g. via F5, to make the
+            // frameset switch to exactly this URL
+            window.parent.history.replaceState({}, page_title, index_url);
+
+            // only update the internal flag var if the url was not blank and has been updated
+            //otherwise try again on next scheduler run
+            g_content_loc = parent.frames[1].document.location.href;
+        }
+    } else {
+        // Only a browser without history.replaceState support reaches this. Sadly
+        // we have no F5/reload fix for them...
+        g_content_loc = parent.frames[1].document.location.href;
+    }
+}
+
 function debug(s) {
   window.parent.frames[1].document.write(s+'<br />');
 }
@@ -623,7 +663,7 @@ function sidebar_scheduler() {
     var newcontent = "";
     var to_be_updated = [];
 
-    for (var i in refresh_snapins) {
+    for (var i = 0; i < refresh_snapins.length; i++) {
         var name = refresh_snapins[i][0];
         if (refresh_snapins[i][1] != '') {
             // Special handling for snapins like the nagvis maps snapin which request
@@ -656,11 +696,15 @@ function sidebar_scheduler() {
         }
     }
 
+    if (g_sidebar_notify_interval !== null && timestamp % g_sidebar_notify_interval == 0) {
+        update_messages();
+    }
+
     // Detect page changes and re-register the mousemove event handler
     // in the content frame. another bad hack ... narf
-    if (contentFrameAccessible() && contentLocation != parent.frames[1].document.location) {
+    if(contentFrameAccessible() && g_content_loc != parent.frames[1].document.location.href) {
         registerEdgeListeners(parent.frames[1]);
-        contentLocation = parent.frames[1].document.location;
+        update_content_location();
     }
     setTimeout(function(){sidebar_scheduler();}, 1000);
 }
@@ -769,4 +813,89 @@ function add_html_var(url, varname, value) {
     return new_url;
 }
 
+/************************************************
+ * Popup Message Handling
+ *************************************************/
 
+// integer representing interval in seconds or <null> when disabled.
+var g_sidebar_notify_interval;
+
+function init_messages(interval) {
+    g_sidebar_notify_interval = interval;
+
+    // Are there pending messages? Render the initial state of
+    // trigger button
+    update_message_trigger();
+}
+
+function handle_update_messages(_unused, code) {
+    // add new messages to container
+    var c = document.getElementById('messages');
+    if (c) {
+        c.innerHTML = code;
+        update_message_trigger();
+    }
+}
+
+function update_messages() {
+    // Remove all pending messages from container
+    var c = document.getElementById('messages');
+    if (c) {
+        c.innerHTML = '';
+    }
+
+    // retrieve new messages
+    get_url('sidebar_get_messages.py', handle_update_messages);
+}
+
+function update_message_trigger() {
+    var c = document.getElementById('messages');
+    if (c) {
+        var b = document.getElementById('msg_button');
+        var num = c.children.length;
+        if (c.children.length > 0) {
+            // are there pending messages? make trigger visible
+            b.style.display = 'inline';
+
+            // Create/Update a blinking number label
+            var l = document.getElementById('msg_label');
+            if (!l) {
+                var l = document.createElement('span');
+                l.setAttribute('id', 'msg_label');
+                b.appendChild(l);
+            }
+
+            l.innerHTML = '' + c.children.length;
+        } else {
+            // no messages: hide the trigger
+            b.style.display = 'none';
+        }
+    }
+}
+
+function read_message() {
+    var c = document.getElementById('messages');
+    if (!c)
+        return;
+
+    // extract message from teh message container
+    var msg = c.children[0];
+    c.removeChild(msg);
+
+    // open the next message in a window
+    c.parentNode.appendChild(msg);
+    
+    // tell server that the message has been read
+    var msg_id = msg.id.replace('message-', '');
+    get_url('sidebar_message_read.py?id=' + msg_id);
+
+    // Update the button state
+    update_message_trigger();
+}
+
+function message_close(msg_id) {
+    var m = document.getElementById('message-' + msg_id);
+    if (m) {
+        m.parentNode.removeChild(m);
+    }
+}

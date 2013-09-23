@@ -1,6 +1,6 @@
-title: Checks number of pending windows updates and needed reboot state
+title: Number of pending windows updates and needed reboot state
 agents: windows
-author: Lars Michelsen <lm@mathias-kettner.de>
+catalog: os/misc
 license: GPL
 distribution: check_mk
 description:

@@ -1,6 +1,6 @@
-title: Monitor performance of OMD monitoring core via Livestatus
+title: Performance of OMD monitoring core via Livestatus
 agents: linux
-author: Mathias Kettner <mk@mathias-kettner.de>
+catalog: app/omd
 license: GPL
 distribution: check_mk
 description:

@@ -1,6 +1,6 @@
-title: Check version of VirtualBox guest additions in Linux guests
+title: Version of VirtualBox guest additions in Linux guests
 agents: linux
-author: Mathias Kettner <mk@mathias-kettner.de>
+catalog: os/services
 license: GPL
 distribution: check_mk
 description:

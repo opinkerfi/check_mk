@@ -1,6 +1,6 @@
-title: Measure remaining filling level of printer supplys for ricoh printers
+title: Ricoh Printers: Remaining filling level
 agents: snmp
-author: Bastian Kuhn <bk@mathias-kettner.de>
+catalog: hw/printer
 license: GPL
 distribution: check_mk
 description:

@@ -1,6 +1,6 @@
-title: Check network load of DRBD devices
+title: Network load of DR:BD devices
 agents: linux
-author: Lars Michelsen <lm@mathias-kettner.de>
+catalog: os/storage
 license: GPL
 distribution: check_mk
 description:

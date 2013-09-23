@@ -1,0 +1,25 @@
+Title: Livestatus/Nagios Core crashes, if nagios.log is not accessible
+Component: livestatus
+State: open
+Date: 2013-08-08 11:30:12
+Targetversion: future
+Class: bug
+
+vermutlich ist das die falsche Mailadresse, um Vorschläger oder Probleme 
+zu melden. Aber ich habe keine passende(re) gefunden.
+
+In Benutzung war: Nagios 3.3, Check_MK check_mk-1.2.2p2 sowie 
+mk-livestatus-1.2.2p2 auf einem Centos 5.5.
+
+Ich hatte das Phänomen, dass der Nagios Core abstürzte, sobald ich die 
+Check_MK-Seite aufgerufen habe. Ursache war, dass das nagios.log-Logfile 
+durch fehlende Berechtigungen nicht rotiert werden konnte und somit auf 
+ > 2 GB angewachsen ist. Aus diesem Grund konnte das Livestatus die 
+Datei nicht mehr öffnen, was wiederum zu einem Absturz des 
+Nagios-Prozess (SIGSEGV) führte.
+
+Ich weiß nicht, inwieweit das Verhalten von Livestatus, die 
+Fehlermeldung bzw. ein Eintrag in der Dokumentation angepasst werden 
+könnten. Der Fehler ist in gewisser Weise selbst verschuldet, jedoch war 
+es nicht leicht, die Ursache zu finden.
+

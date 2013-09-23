@@ -347,7 +347,10 @@ def command_downtime(cmdtag, spec, row):
 
         down_to = time.time() + minutes * 60
         title = _("<b>schedule an immediate downtime for the next %d minutes</b> on" % minutes)
-
+    elif html.var("_down_adhoc"):
+        minutes = config.adhoc_downtime.get("duration",0)
+        down_to = time.time() + minutes * 60
+        title = _("<b>schedule an immediate downtime for the next %d minutes</b> on" % minutes)
     elif html.var("_down_custom"):
         down_from = html.get_datetime_input("_down_from")
         down_to   = html.get_datetime_input("_down_to")
@@ -376,7 +379,10 @@ def command_downtime(cmdtag, spec, row):
         return commands, title
 
     if down_to:
-        comment = html.var_utf8("_down_comment")
+        if html.var("_down_adhoc"):
+            comment = config.adhoc_downtime.get("comment","")
+        else:
+            comment = html.var_utf8("_down_comment")
         if not comment:
             raise MKUserError("_down_comment", _("You need to supply a comment for your downtime."))
         if html.var("_down_flexible"):
@@ -414,8 +420,14 @@ def get_child_hosts(site, hosts, recurse):
     return list(new_childs)
 
 def paint_downtime_buttons(what):
+
     html.write(_('Downtime Comment')+": ")
-    html.text_input("_down_comment", size=40, submit="")
+    html.text_input("_down_comment", "", size=60, submit="")
+    html.write("<hr>")
+    html.button("_down_from_now", _("From now for"))
+    html.write("&nbsp;")
+    html.number_input("_down_minutes", 60, size=4, submit="_down_from_now")
+    html.write("&nbsp; " + _("minutes"))
     html.write("<hr>")
     html.button("_down_2h", _("2 hours"))
     html.button("_down_today", _("Today"))
@@ -425,15 +437,19 @@ def paint_downtime_buttons(what):
     html.write(" &nbsp; - &nbsp;")
     html.button("_down_remove", _("Remove all"))
     html.write("<hr>")
+    if config.adhoc_downtime and config.adhoc_downtime.get("duration"):
+        adhoc_duration = config.adhoc_downtime.get("duration")
+        adhoc_comment  = config.adhoc_downtime.get("comment", "")
+        html.button("_down_adhoc", _("Adhoc for %d minutes") % adhoc_duration)
+        html.write("&nbsp;")
+        html.write(_('with comment')+": ")
+        html.write(adhoc_comment)
+        html.write("<hr>")
+
     html.button("_down_custom", _("Custom time range"))
     html.datetime_input("_down_from", time.time(), submit="_down_custom")
     html.write("&nbsp; "+_('to')+" &nbsp;")
     html.datetime_input("_down_to", time.time() + 7200, submit="_down_custom")
-    html.write("<hr>")
-    html.button("_down_from_now", _("From now for"))
-    html.write("&nbsp;")
-    html.number_input("_down_minutes", 60, size=4, submit="_down_from_now")
-    html.write("&nbsp; " + _("minutes"))
     html.write("<hr>")
     html.checkbox("_down_flexible", False, label=_('flexible with max. duration')+" ")
     html.time_input("_down_duration", 2, 0)

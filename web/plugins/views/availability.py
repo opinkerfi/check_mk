@@ -203,6 +203,41 @@ avoption_entries = [
     ),
   ),
 
+  # Show colummns for min, max, avg duration and count
+  ( "outage_statistics",
+    "double",
+    Tuple(
+        title = _("Outage statistics"),
+        orientation = "horizontal",
+        elements = [
+            ListChoice(
+                title = _("Aggregations"),
+                choices = [
+                  ( "min", _("minimum duration" )),
+                  ( "max", _("maximum duration" )),
+                  ( "avg", _("average duration" )),
+                  ( "cnt", _("count" )),
+                ]
+            ),
+            ListChoice(
+                title = _("For these states:"),
+                columns = 2,
+                choices = [
+                    ( "ok",                        _("OK/Up") ),
+                    ( "warn",                      _("Warn") ),
+                    ( "crit",                      _("Crit/Down") ),
+                    ( "unknown",                   _("Unknown/Unreach") ),
+                    ( "flapping",                  _("Flapping") ),
+                    ( "host_down",                 _("Host Down") ),
+                    ( "in_downtime",               _("Downtime") ),
+                    ( "outof_notification_period", _("OO/Notif") ),
+                ]
+            )
+        ]
+    )
+  ),
+
+
   # How to deal with times out of the notification period
   ( "notification_period",
     "single",
@@ -291,6 +326,7 @@ def render_availability_options():
             "unknown"   : "unknown",
             "host_down" : "host_down",
         },
+        "outage_statistics" : ([],[]),
         "short_intervals" : 0,
         "dont_merge" : False,
         "summary" : "sum",
@@ -298,6 +334,7 @@ def render_availability_options():
     # Make sure that parameters are set that have not been present in the
     # original version. This code can be dropped in a couple of years.
     avoptions.setdefault("notification_period", "honor")
+    avoptions.setdefault("outage_statistics", ([], []))
 
     is_open = False
     html.begin_form("avoptions")
@@ -344,12 +381,18 @@ def render_availability_options():
     if html.form_submitted():
         config.save_user_file("avoptions", avoptions)
 
+    # Convert outage-options from service to host
+    states = avoptions["outage_statistics"][1]
+    for os, oh in [ ("ok","up"), ("crit","down"), ("unknown", "unreach") ]:
+        if os in states:
+            states.append(oh)
+
     return avoptions
 
 month_names = [
-  _("January"), _("February"), _("March"), _("April"),
-  _("May"), _("June"), _("July"), _("August"),
-  _("September"), _("October"), _("November"), _("December")
+  _("January"),   _("February"), _("March"),    _("April"),
+  _("May"),       _("June"),     _("July"),     _("August"),
+  _("September"), _("October"),  _("November"), _("December")
 ]
 
 def compute_range(rangespec):
@@ -442,7 +485,7 @@ def get_availability_data(datasource, filterheaders, range, only_sites, limit, t
         columns.append("log_output")
 
     add_columns = datasource.get("add_columns", [])
-    rows = do_query_data(query, columns, add_columns, None, filterheaders, only_sites, limit)
+    rows = do_query_data(query, columns, add_columns, None, filterheaders, only_sites, limit = None)
     return rows
 
 
@@ -499,6 +542,9 @@ def do_render_availability(rows, what, avoptions, timeline, timewarpcode):
     #                    2.2.2.2.3 "crit"
     #                    2.2.2.2.4 "unknown"
     availability = []
+    os_aggrs, os_states = avoptions.get("outage_statistics", ([],[]))
+    need_statistics = os_aggrs and os_states
+
     # Note: in case of timeline, we have data from exacly one host/service
     for site_host, site_host_entry in by_host.iteritems():
         for service, service_entry in site_host_entry.iteritems():
@@ -552,12 +598,21 @@ def do_render_availability(rows, what, avoptions, timeline, timewarpcode):
 
             # Condense into availability
             states = {}
+            statistics = {}
             for span, s in timeline_rows:
                 states.setdefault(s, 0)
-                states[s] += span["duration"]
+                duration = span["duration"]
+                states[s] += duration
+                if need_statistics:
+                    entry = statistics.get(s)
+                    if entry:
+                        entry[0] += 1
+                        entry[1] = min(entry[1], duration)
+                        entry[2] = max(entry[2], duration)
+                    else:
+                        statistics[s] = [ 1, duration, duration ] # count, min, max
 
-            availability.append([site_host[0], site_host[1], service, states, considered_duration])
-
+            availability.append([site_host[0], site_host[1], service, states, considered_duration, statistics])
 
     # Prepare number format function
     range, range_title = avoptions["range"]
@@ -642,7 +697,7 @@ def render_timeline(timeline_rows, from_time, until_time, considered_duration,
     html.write(timewarpcode)
 
     # Render Table
-    table.begin("", css="timelineevents")
+    table.begin("av_timeline", "", css="timelineevents")
     for row_nr, (row, state_id) in enumerate(timeline_rows):
         table.row()
         if what == "bi":
@@ -704,9 +759,20 @@ def history_url_of(site, host, service, from_time, until_time):
             ("view_name", "hostevents"),
         ]
 
-    return "view.py?" + htmllib.urlencode_vars(history_url_vars)
+    return "view.py?" + html.urlencode_vars(history_url_vars)
+
+statistics_headers = {
+    "min" : _("Shortest"),
+    "max" : _("Longest"),
+    "avg" : _("Average"),
+    "cnt" : _("Count"),
+}
 
 def render_availability_table(availability, from_time, until_time, range_title, what, avoptions, render_number):
+    if not availability:
+        html.message(_("No matching hosts/services."))
+        return # No objects
+
     # Some columns might be unneeded due to state treatment options
     sg = avoptions["state_grouping"]
     state_groups = [ sg["warn"], sg["unknown"], sg["host_down"] ]
@@ -730,8 +796,10 @@ def render_availability_table(availability, from_time, until_time, range_title, 
     availability.sort()
     show_summary = what != "bi" and avoptions.get("summary")
     summary = {}
-    table.begin(_("Availability") + " " + range_title, css="availability")
-    for site, host, service, states, considered_duration in availability:
+    summary_counts = {}
+    table.begin("av_items", _("Availability") + " " + range_title, css="availability",
+        searchable = False, limit = None)
+    for site, host, service, states, considered_duration, statistics in availability:
         table.row()
 
         if what != "bi":
@@ -746,15 +814,15 @@ def render_availability_table(availability, from_time, until_time, range_title, 
                    ("timeline_service", service)])
             html.icon_button(timeline_url, _("Timeline"), "timeline")
 
-        host_url = "view.py?" + htmllib.urlencode_vars([("view_name", "hoststatus"), ("site", site), ("host", host)])
+        host_url = "view.py?" + html.urlencode_vars([("view_name", "hoststatus"), ("site", site), ("host", host)])
         if what == "bi":
-            bi_url = "view.py?" + htmllib.urlencode_vars([("view_name", "aggr_single"), ("aggr_name", service)])
+            bi_url = "view.py?" + html.urlencode_vars([("view_name", "aggr_single"), ("aggr_name", service)])
             table.cell(_("Aggregate"), '<a href="%s">%s</a>' % (bi_url, service))
             availability_columns = bi_availability_columns
         else:
             table.cell(_("Host"), '<a href="%s">%s</a>' % (host_url, host))
             if what == "service":
-                service_url = "view.py?" + htmllib.urlencode_vars([("view_name", "service"), ("site", site), ("host", host), ("service", service)])
+                service_url = "view.py?" + html.urlencode_vars([("view_name", "service"), ("site", site), ("host", host), ("service", service)])
                 table.cell(_("Service"), '<a href="%s">%s</a>' % (service_url, service))
                 availability_columns = service_availability_columns
             else:
@@ -768,8 +836,35 @@ def render_availability_table(availability, from_time, until_time, range_title, 
                 css = "unused"
             elif show_summary:
                 summary.setdefault(sid, 0.0)
-                summary[sid] += number
+                if avoptions["timeformat"].startswith("percentage"):
+                    summary[sid] += float(number) / considered_duration
+                else:
+                    summary[sid] += number
+
             table.cell(sname, render_number(number, considered_duration), css="number " + css, help=help)
+
+            # Statistics?
+            x_cnt, x_min, x_max = statistics.get(sid, (None, None, None))
+            os_aggrs, os_states = avoptions.get("outage_statistics", ([],[]))
+            if sid in os_states:
+                for aggr in os_aggrs:
+                    title = statistics_headers[aggr]
+                    if x_cnt != None:
+                        if aggr == "avg":
+                            r = render_number(number / x_cnt, considered_duration)
+                        elif aggr == "min":
+                            r = render_number(x_min, considered_duration)
+                        elif aggr == "max":
+                            r = render_number(x_max, considered_duration)
+                        else:
+                            r = str(x_cnt)
+                            summary_counts.setdefault(sid, 0)
+                            summary_counts[sid] += x_cnt
+                        table.cell(title, r, css="number stats " + css)
+                    else:
+                        table.cell(title, "")
+
+
 
     if show_summary:
         table.row(css="summary")
@@ -777,7 +872,6 @@ def render_availability_table(availability, from_time, until_time, range_title, 
         table.cell("", _("Summary"))
         if what == "service":
             table.cell("", "")
-        considered_duration = until_time - from_time
 
         for sid, css, sname, help in availability_columns:
             if not cell_active(sid):
@@ -785,9 +879,25 @@ def render_availability_table(availability, from_time, until_time, range_title, 
             number = summary.get(sid, 0)
             if show_summary == "average" or avoptions["timeformat"].startswith("percentage"):
                 number /= len(availability)
+                if avoptions["timeformat"].startswith("percentage"):
+                    number *= considered_duration
             if not number:
                 css = "unused"
             table.cell(sname, render_number(number, considered_duration), css="number " + css, help=help)
+            os_aggrs, os_states = avoptions.get("outage_statistics", ([],[]))
+            if sid in os_states:
+                for aggr in os_aggrs:
+                    title = statistics_headers[aggr]
+                    if aggr == "cnt":
+                        count = summary_counts.get(sid, 0)
+                        if show_summary == "average":
+                            count = float(count) / len(availability)
+                            text = "%.2f" % count
+                        else:
+                            text = str(count)
+                        table.cell(sname, text, css="number stats " + css, help=help)
+                    else:
+                        table.cell(title, "")
 
     table.end()
 
@@ -804,7 +914,7 @@ def render_bi_availability(tree):
     html.begin_context_buttons()
     togglebutton("avoptions", False, "painteroptions", _("Configure details of the report"))
     html.context_button(_("Status View"), "view.py?" +
-            htmllib.urlencode_vars([("view_name", "aggr_single"),
+            html.urlencode_vars([("view_name", "aggr_single"),
               ("aggr_name", tree["title"])]), "showbi")
     if timeline:
         html.context_button(_("Availability"), html.makeuri([("timeline", "")]), "availability")

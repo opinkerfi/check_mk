@@ -42,7 +42,10 @@ def load_plugins():
         return
 
     # declare & initialize global vars
+    global user_attributes ; user_attributes = {}
     global multisite_user_connectors ; multisite_user_connectors = []
+
+    declare_custom_user_attrs()
 
     load_web_plugins("userdb", globals())
 
@@ -104,7 +107,7 @@ def new_user_template(connector_id):
     return new_user
 
 def create_non_existing_user(connector_id, username):
-    users = load_users()
+    users = load_users(lock = True)
     if username in users:
         return # User exists. Nothing to do...
 
@@ -118,7 +121,42 @@ def user_locked(username):
     users = load_users()
     return users[username].get('locked', False)
 
+def update_user_access_time():
+    if not config.save_user_access_times:
+        return
 
+    users = load_users(lock = True)
+    users[html.user]['last_seen'] = time.time()
+    save_users(users)
+
+def on_succeeded_login(username):
+    users = load_users(lock = True)
+    changed = False
+
+    if users[username].get('num_failed', 0) != 0:
+        users[username]["num_failed"] = 0
+        changed = True
+
+    if config.save_user_access_times:
+        users[username]['last_seen'] = time.time()
+        changed = True
+
+    if changed:
+        save_users(users)
+
+def on_failed_login(username):
+    users = load_users(lock = True)
+    if username in users:
+        if "num_failed" in users[username]:
+            users[username]["num_failed"] += 1
+        else:
+            users[username]["num_failed"] = 1
+
+        if config.lock_on_logon_failures:
+            if users[username]["num_failed"] >= config.lock_on_logon_failures:
+                users[username]["locked"] = True
+
+        save_users(users)
 
 root_dir      = defaults.check_mk_configdir + "/wato/"
 multisite_dir = defaults.default_config_dir + "/multisite.d/wato/"
@@ -132,20 +170,30 @@ multisite_dir = defaults.default_config_dir + "/multisite.d/wato/"
 #   |                                                                      |
 #   +----------------------------------------------------------------------+
 
+def declare_user_attribute(name, vs, user_editable = True, permission = None, show_in_table = False, topic = None):
+    user_attributes[name] = {
+        'valuespec':     vs,
+        'user_editable': user_editable,
+        'show_in_table': show_in_table,
+        'topic':         topic and topic or 'personal',
+    }
+    # Permission needed for editing this attribute
+    if permission:
+        user_attributes[name]["permission"] = permission
+
 def get_user_attributes():
     return user_attributes.items()
 
-def reset_user_attributes():
-    global user_attributes
-    user_attributes = {}
-
-def load_users():
+def load_users(lock = False):
     filename = root_dir + "contacts.mk"
 
-    # Make sure that the file exists without modifying it, *if* it exists.
-    # Note the lock will be released at end of page request automatically.
-    file(filename, "a")
-    aquire_lock(filename)
+    if lock:
+        # Make sure that the file exists without modifying it, *if* it exists
+        # to be able to lock and realease the file properly.
+        # Note: the lock will be released on next save_users() call or at
+        #       end of page request automatically.
+        file(filename, "a")
+        aquire_lock(filename)
 
     # First load monitoring contacts from Check_MK's world. If this is
     # the first time, then the file will be empty, which is no problem.
@@ -154,6 +202,8 @@ def load_users():
         vars = { "contacts" : {} }
         execfile(filename, vars, vars)
         contacts = vars["contacts"]
+    except IOError:
+        contacts = {} # a not existing file is ok, start with empty data
     except Exception, e:
         if config.debug:
             raise MKGeneralException(_("Cannot read configuration file %s: %s" %
@@ -165,20 +215,19 @@ def load_users():
 
     # Now add information about users from the Web world
     filename = multisite_dir + "users.mk"
-    if os.path.exists(filename):
-        try:
-            vars = { "multisite_users" : {} }
-            execfile(filename, vars, vars)
-            users = vars["multisite_users"]
-        except Exception, e:
-            if config.debug:
-                raise MKGeneralException(_("Cannot read configuration file %s: %s" %
-                              (filename, e)))
-            else:
-                html.log('load_users: Problem while loading users (%s - %s). '
-                         'Initializing structure...' % (filename, e))
-            users = {}
-    else:
+    try:
+        vars = { "multisite_users" : {} }
+        execfile(filename, vars, vars)
+        users = vars["multisite_users"]
+    except IOError:
+        users = {} # not existing is ok -> empty structure
+    except Exception, e:
+        if config.debug:
+            raise MKGeneralException(_("Cannot read configuration file %s: %s" %
+                          (filename, e)))
+        else:
+            html.log('load_users: Problem while loading users (%s - %s). '
+                     'Initializing structure...' % (filename, e))
         users = {}
 
     # Merge them together. Monitoring users not known to Multisite
@@ -206,41 +255,45 @@ def load_users():
     # they are getting according to the multisite old-style
     # configuration variables.
 
+    def readlines(f):
+        try:
+            return file(f)
+        except IOError:
+            return []
+
     filename = defaults.htpasswd_file
-    if os.path.exists(filename):
-        for line in file(filename):
-            line = line.strip()
-            if ':' in line:
-                id, password = line.strip().split(":")[:2]
-                if password.startswith("!"):
-                    locked = True
-                    password = password[1:]
-                else:
-                    locked = False
-                if id in result:
-                    result[id]["password"] = password
-                    result[id]["locked"] = locked
-                else:
-                    # Create entry if this is an admin user
-                    new_user = {
-                        "roles"    : config.roles_of_user(id),
-                        "password" : password,
-                        "locked"   : False,
-                    }
-                    result[id] = new_user
-                # Make sure that the user has an alias
-                result[id].setdefault("alias", id)
-            # Other unknown entries will silently be dropped. Sorry...
+    for line in readlines(filename):
+        line = line.strip()
+        if ':' in line:
+            id, password = line.strip().split(":")[:2]
+            if password.startswith("!"):
+                locked = True
+                password = password[1:]
+            else:
+                locked = False
+            if id in result:
+                result[id]["password"] = password
+                result[id]["locked"] = locked
+            else:
+                # Create entry if this is an admin user
+                new_user = {
+                    "roles"    : config.roles_of_user(id),
+                    "password" : password,
+                    "locked"   : False,
+                }
+                result[id] = new_user
+            # Make sure that the user has an alias
+            result[id].setdefault("alias", id)
+        # Other unknown entries will silently be dropped. Sorry...
 
     # Now read the serials, only process for existing users
     serials_file = '%s/auth.serials' % os.path.dirname(defaults.htpasswd_file)
-    if os.path.exists(serials_file):
-        for line in file(serials_file):
-            line = line.strip()
-            if ':' in line:
-                user_id, serial = line.split(':')[:2]
-                if user_id in result:
-                    result[user_id]['serial'] = saveint(serial)
+    for line in readlines(serials_file):
+        line = line.strip()
+        if ':' in line:
+            user_id, serial = line.split(':')[:2]
+            if user_id in result:
+                result[user_id]['serial'] = saveint(serial)
 
     # Now read the user specific files
     dir = defaults.var_dir + "/web/"
@@ -248,11 +301,21 @@ def load_users():
         if d[0] != '.':
             id = d
 
+            # read special values from own files
+            for val, conv_func in [ ('num_failed', saveint), ('last_seen', savefloat) ]:
+                if id in result:
+                    try:
+                        result[id][val] = conv_func(file(dir + d + '/' + val + '.mk').read().strip())
+                    except IOError:
+                        pass
+
             # read automation secrets and add them to existing
             # users or create new users automatically
-            secret_file = dir + d + "/automation.secret"
-            if os.path.exists(secret_file):
-                secret = file(secret_file).read().strip()
+            try:
+                secret = file(dir + d + "/automation.secret").read().strip()
+            except IOError:
+                secret = None
+            if secret:
                 if id in result:
                     result[id]["automation_secret"] = secret
                 else:
@@ -263,9 +326,16 @@ def load_users():
 
     return result
 
+def get_online_user_ids():
+    online_threshold = time.time() - config.user_online_maxage
+    users = []
+    for user_id, user in load_users(lock = False).items():
+        if user.get('last_seen', 0) >= online_threshold:
+            users.append(user_id)
+    return users
+
 def split_dict(d, keylist, positive):
     return dict([(k,v) for (k,v) in d.items() if (k in keylist) == positive])
-
 
 def save_users(profiles):
     custom_values = user_attributes.keys()
@@ -279,6 +349,8 @@ def save_users(profiles):
         "language",
         "serial",
         "connector",
+        "num_failed",
+        "last_seen",
     ] + custom_values
 
     # Keys to put into multisite configuration
@@ -347,7 +419,16 @@ def save_users(profiles):
         serial_file = user_dir + '/serial.mk'
         create_user_file(serial_file, 'w').write('%d\n' % user.get('serial', 0))
 
-    # Remove settings directories of non-existant users. 
+        # Write out the users number of failed login
+        failed_file = user_dir + '/num_failed.mk'
+        create_user_file(failed_file, 'w').write('%d\n' % user.get('num_failed', 0))
+
+        # Write out the last seent time
+        if 'last_seen' in user:
+            last_seen_file = user_dir + '/last_seen.mk'
+            create_user_file(last_seen_file, 'w').write(repr(user['last_seen']) + '\n')
+
+    # Remove settings directories of non-existant users.
     # Beware: we removed this since it leads to violent destructions
     # if the user database is out of the scope of Check_MK. This is
     # e.g. the case, if mod_ldap is used for user authentication.
@@ -357,6 +438,19 @@ def save_users(profiles):
     #         entry = dir + "/" + e
     #         if os.path.isdir(entry):
     #             shutil.rmtree(entry)
+    # But for the automation.secret this is ok, since automation users are not
+    # created by other sources in common cases
+    dir = defaults.var_dir + "/web"
+    for user_dir in os.listdir(defaults.var_dir + "/web"):
+        if user_dir not in ['.', '..'] and user_dir not in profiles:
+            entry = dir + "/" + user_dir
+            if os.path.isdir(entry) and os.path.exists(entry + '/automation.secret'):
+                os.unlink(entry + '/automation.secret')
+
+    # Release the lock to make other threads access possible again asap
+    # This lock is set by load_users() only in the case something is expected
+    # to be written (like during user syncs, wato, ...)
+    release_lock(root_dir + "contacts.mk")
 
     # Call the users_saved hook
     hooks.call("users-saved", users)
@@ -384,9 +478,6 @@ def load_roles():
                   for id in config.builtin_role_ids ])
 
     filename = multisite_dir + "roles.mk"
-    if not os.path.exists(filename):
-        return roles
-
     try:
         vars = { "roles" : roles }
         execfile(filename, vars, vars)
@@ -406,6 +497,8 @@ def load_roles():
 
         return vars["roles"]
 
+    except IOError:
+        return roles # Use empty structure, not existing file is ok!
     except Exception, e:
         if config.debug:
             raise MKGeneralException(_("Cannot read configuration file %s: %s" %
@@ -426,15 +519,16 @@ def load_roles():
 
 def load_group_information():
     try:
-        filename = root_dir + "groups.mk"
-        if not os.path.exists(filename):
-            return {}
-
         vars = {}
         for what in ["host", "service", "contact" ]:
             vars["define_%sgroups" % what] = {}
 
-        execfile(filename, vars, vars)
+        filename = root_dir + "groups.mk"
+        try:
+            execfile(filename, vars, vars)
+        except IOError:
+            return {} # skip on not existing file
+
         groups = {}
         for what in ["host", "service", "contact" ]:
             groups[what] = vars.get("define_%sgroups" % what, {})
@@ -448,6 +542,53 @@ def load_group_information():
             html.log('load_group_information: Problem while loading groups (%s - %s). '
                      'Initializing structure...' % (filename, e))
         return {}
+
+#   .--Custom-Attrs.-------------------------------------------------------.
+#   |   ____          _                          _   _   _                 |
+#   |  / ___|   _ ___| |_ ___  _ __ ___         / \ | |_| |_ _ __ ___      |
+#   | | |  | | | / __| __/ _ \| '_ ` _ \ _____ / _ \| __| __| '__/ __|     |
+#   | | |__| |_| \__ \ || (_) | | | | | |_____/ ___ \ |_| |_| |  \__ \_    |
+#   |  \____\__,_|___/\__\___/|_| |_| |_|    /_/   \_\__|\__|_|  |___(_)   |
+#   |                                                                      |
+#   +----------------------------------------------------------------------+
+#   | Mange custom attributes of users (in future hosts etc.)              |
+#   '----------------------------------------------------------------------'
+
+def load_custom_attrs():
+    try:
+        filename = multisite_dir + "custom_attrs.mk"
+        if not os.path.exists(filename):
+            return {}
+
+        vars = {
+            'wato_user_attrs': [],
+        }
+        execfile(filename, vars, vars)
+
+        attrs = {}
+        for what in [ "user" ]:
+            attrs[what] = vars.get("wato_%s_attrs" % what, [])
+        return attrs
+
+    except Exception, e:
+        if config.debug:
+            raise MKGeneralException(_("Cannot read configuration file %s: %s" %
+                          (filename, e)))
+        else:
+            html.log('load_custom_attrs: Problem while loading custom attributes (%s - %s). '
+                     'Initializing structure...' % (filename, e))
+        return {}
+
+def declare_custom_user_attrs():
+    all_attrs = load_custom_attrs()
+    attrs = all_attrs.setdefault('user', [])
+    for attr in attrs:
+        vs = globals()[attr['type']](title = attr['title'], help = attr['help'])
+        declare_user_attribute(attr['name'], vs,
+            user_editable = attr['user_editable'],
+            show_in_table = attr.get('show_in_table', False),
+            topic = attr.get('topic', 'personal'),
+        )
 
 #   .----------------------------------------------------------------------.
 #   |                     _   _             _                              |
@@ -496,18 +637,21 @@ def hook_login(username, password):
 # Is called on:
 #   a) before rendering the user management page in WATO
 #   b) a user is created during login (only for this user)
-def hook_sync(connector_id = None, add_to_changelog = False, only_username = None):
+def hook_sync(connector_id = None, add_to_changelog = False, only_username = None, raise_exc = False):
     if connector_id:
         connectors = [ get_connector(connector_id) ]
     else:
         connectors = enabled_connectors()
 
+    no_errors = True
     for connector in connectors:
         handler = connector.get('sync', None)
         if handler:
             try:
                 handler(add_to_changelog, only_username)
             except MKLDAPException, e:
+                if raise_exc:
+                    raise
                 if config.debug:
                     import traceback
                     html.show_error(
@@ -519,12 +663,17 @@ def hook_sync(connector_id = None, add_to_changelog = False, only_username = Non
                         "<h3>" + _("Error executing sync hook") + "</h3>"
                         "<pre>%s</pre>" % (e)
                     )
+                no_errors = False
             except:
+                if raise_exc:
+                    raise
                 import traceback
                 html.show_error(
                     "<h3>" + _("Error executing sync hook") + "</h3>"
                     "<pre>%s</pre>" % (traceback.format_exc())
                 )
+                no_errors = False
+    return no_errors
 
 # Hook function can be registered here to be executed during saving of the
 # new user construct
@@ -539,7 +688,7 @@ def hook_save(users):
             if config.debug:
                 import traceback
                 html.show_error(
-                    "<h3>" + _("Error executing sync hook") + "</h3>"
+                    "<h3>" + _("Error executing save hook") + "</h3>"
                     "<pre>%s</pre>" % (traceback.format_exc())
                 )
             else:
@@ -555,18 +704,21 @@ def general_page_hook():
     # This is a good place to replace old api based files in the future.
     auth_php = defaults.var_dir + '/wato/auth/auth.php'
     if not os.path.exists(auth_php) or os.path.getsize(auth_php) == 0:
-        create_auth_file(load_users())
+        create_auth_file("page_hook", load_users())
 
     # Create initial auth.serials file, same issue as auth.php above
     serials_file = '%s/auth.serials' % os.path.dirname(defaults.htpasswd_file)
     if not os.path.exists(serials_file) or os.path.getsize(serials_file) == 0:
-        save_users(load_users())
+        save_users(load_users(lock = True))
 
 # Hook function can be registered here to execute actions on a "regular" base without
 # user triggered action. This hook is called on each page load.
 # Catch all exceptions and log them to apache error log. Let exceptions raise trough
 # when debug mode is enabled.
 def hook_page():
+    if 'page' not in config.userdb_automatic_sync:
+        return
+
     for connector in enabled_connectors():
         handler = connector.get('page', None)
         if not handler:
@@ -582,3 +734,10 @@ def hook_page():
                             (connector['id'], traceback.format_exc()))
 
     general_page_hook()
+
+def ajax_sync():
+    try:
+        hook_sync(add_to_changelog = False, raise_exc = True)
+        html.write('OK')
+    except Exception, e:
+        html.write('ERROR %s' % e)

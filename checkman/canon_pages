@@ -1,6 +1,6 @@
-title: Monitors printed/scanned pages in canon printers
+title: Canon Printer: Printed/scanned pages
 agents: snmp
-author: Lars Michelsen <lm@mathias-kettner.de>
+catalog: hw/printer
 license: GPL
 distribution: check_mk
 description:

@@ -28,7 +28,7 @@
 # Put here the example output from your TCP-Based agent. If the
 # check is SNMP-Based, then remove this section
 
-def inventory_foobars(info):
+def inventory_foobar(info):
     return []
 
 def check_foobar(item, _no_params, info):

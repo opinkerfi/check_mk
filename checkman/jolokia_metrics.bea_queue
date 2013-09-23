@@ -1,6 +1,6 @@
-title: Length of queue in BEA
+title: BEA Weblogic: Length of queue
 agents: linux
-author: Mathias Kettner <mk@mathias-kettner.de>
+catalog: app/java
 license: GPL
 distribution: check_mk
 description:

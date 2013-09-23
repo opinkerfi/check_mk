@@ -24,8 +24,8 @@
 # to the Free Software Foundation, Inc., 51 Franklin St,  Fifth Floor,
 # Boston, MA 02110-1301 USA.
 
-from mod_python import Cookie, apache
-import time, cgi, config, os, defaults, pwd, urllib, weblib, random
+import time, os, pwd, urllib, random
+
 from lib import *
 # Python 2.3 does not have 'set' in normal namespace.
 # But it can be imported from 'sets'
@@ -40,134 +40,8 @@ class InvalidUserInput(Exception):
         self.varname = varname
         self.text = text
 
-
-class uriinfo:
-    def __init__(self, req):
-        self.req = req
-
-    # URI aus Dateiname und Variablen rekonstruieren
-    # TODO: URI-Encode von Variablen!
-    def geturi(self):
-        uri = self.req.myfile + ".py"
-        if self.req.vars:
-            uri += "?" + urlencode(self.req.vars.items())
-        return uri
-
-    # [('varname1', value1), ('varname2', value2) ]
-    def makeuri(self, addvars):
-        v = self.req.vars.items() + addvars
-        if v:
-            return self.req.myfile + ".py?" + urlencode_vars(v)
-        else:
-            return self.req.myfile + ".py"
-
-    # Liste von Hidden-Felder erzeugen aus aktueller URI
-    def hiddenfields(self, omit=[]):
-        return ''.join([ '<input type=hidden name="%s" value="%s">\n' % i \
-                         for i in self.req.vars.items() \
-                         if i[0] not in omit ])
-
-
-# Encode HTML attributes: replace " with &quot;, also replace
-# < and >. This code is slow.
-def attrencode(value):
-    if type(value) == int:
-        return str(value)
-    new = ""
-    for c in value:
-        if c == '"':
-            new += "&quot;"
-        elif c == '<':
-            new += "&lt;"
-        elif c == '>':
-            new += "&gt;"
-        else:
-            new += c
-    return new
-
-# This function returns a str object, never unicode!
-# Beware: this code is crucial for the performance of Multisite!
-# Changing from the self coded urlencode to urllib.quote
-# is saving more then 90% of the total HTML generating time
-# on more complex pages!
-def urlencode_vars(vars):
-    output = []
-    for varname, value in vars:
-	if type(value) == int:
-	    value = str(value)
-        elif type(value) == unicode:
-            value = value.encode("utf-8")
-
-        try:
-            # urllib is not able to encode non-Ascii characters. Yurks
-            output.append(varname + '=' + urllib.quote(value))
-        except:
-            output.append(varname + '=' + urlencode(value)) # slow but working
-
-    return '&'.join(output)
-
-def urlencode(value):
-    if type(value) == unicode:
-        value = value.encode("utf-8")
-    elif value == None:
-        return ""
-    ret = ""
-    for c in value:
-        if c == " ":
-            c = "+"
-        elif ord(c) <= 32 or ord(c) > 127 or c in [ '#', '+', '"', "'", "=", "&", ":", "%" ]:
-            c = "%%%02x" % ord(c)
-        ret += c
-    return ret
-
-def urldecode(value):
-    return urllib.unquote_plus(value)
-
-def u8(c):
-    if ord(c) > 127:
-        return "&#%d;" % ord(c)
-    else:
-        return c
-
-def utf8_to_entities(text):
-    if type(text) != unicode:
-        return text
-    else:
-        return text.encode("utf-8")
-
-    # Old code is soooooooo slow...
-    n = ""
-    for c in text:
-        n += u8(c)
-    return n
-
-# remove all HTML-tags
-def strip_tags(ht):
-    while True:
-        x = ht.find('<')
-        if x == -1:
-            break
-        y = ht.find('>', x)
-        if y == -1:
-            break
-        ht = ht[0:x] + ht[y+1:]
-    return ht
-
-def strip_scripts(ht):
-    while True:
-        x = ht.find('<script')
-        if x == -1:
-            break
-        y = ht.find('</script>')
-        if y == -1:
-            break
-        ht = ht[0:x] + ht[y+9:]
-    return ht
-
-
 class html:
-    def __init__(self, req):
-        self.req = req
+    def __init__(self):
         self.user_errors = {}
         self.focus_object = None
         self.global_vars = []
@@ -192,6 +66,10 @@ class html:
         self.keybindings = []
         self.keybindings_enabled = True
         self.io_error = False
+        self.enable_debug = False
+        self.help_visible = False
+        self.treestates = {}
+        self.treestates_for_id = None
 
     RETURN = 13
     SHIFT = 16
@@ -213,22 +91,6 @@ class html:
         self.auto_id += 1
         return "id_%d" % self.auto_id
 
-    def plugin_stylesheets(self):
-        global plugin_stylesheets
-        try:
-            return plugin_stylesheets
-        except:
-            plugins_paths = [ defaults.web_dir + "/htdocs/css" ]
-            if defaults.omd_root:
-                plugins_paths.append(defaults.omd_root + "/local/share/check_mk/web/htdocs/css")
-            plugin_stylesheets = set([])
-            for dir in plugins_paths:
-                if os.path.exists(dir):
-                    for fn in os.listdir(dir):
-                        if fn.endswith(".css"):
-                            plugin_stylesheets.add(fn)
-            return plugin_stylesheets
-
     def set_output_format(self, f):
         self.output_format = f
 
@@ -246,20 +108,6 @@ class html:
             self.plugged_text += text
         else:
             self.lowlevel_write(text)
-
-    def lowlevel_write(self, text):
-        if self.io_error:
-            return
-
-        try:
-            if self.buffering:
-                self.req.write(text, 0)
-            else:
-                self.req.write(text)
-        except IOError, e:
-            # Catch writing problems to client, prevent additional writes
-            self.io_error = True
-            self.log('%s' % e)
 
     def plug(self):
         self.plugged = True
@@ -308,7 +156,7 @@ class html:
                    onsubmit = None, add_transid = True):
         self.form_vars = []
         if action == None:
-            action = self.req.myfile + ".py"
+            action = self.myfile + ".py"
         self.current_form = name
         if method.lower() == "post":
             enctype = ' enctype="multipart/form-data"'
@@ -352,7 +200,8 @@ class html:
     def hidden_field(self, var, value, id = None, add_var = False):
         if value != None:
             id = id and ' id="%s"' % id or ''
-            self.write("<input type=hidden name=\"%s\" value=\"%s\"%s>" % (attrencode(var), attrencode(value), id))
+            self.write("<input type=\"hidden\" name=\"%s\" value=\"%s\"%s />" %
+                                (self.attrencode(var), self.attrencode(value), id))
             if add_var:
                 self.add_form_var(var)
 
@@ -365,10 +214,10 @@ class html:
         add_action_vars = args.get("add_action_vars", False)
         if varlist != None:
             for var in varlist:
-                value = self.req.vars.get(var, "")
+                value = self.vars.get(var, "")
                 self.hidden_field(var, value)
         else: # add *all* get variables, that are not set by any input!
-            for var, value in self.req.vars.items():
+            for var, value in self.vars.items():
                 if var not in self.form_vars and \
                     (var[0] != "_" or add_action_vars): # and var != "filled_in":
                     self.hidden_field(var, value)
@@ -380,15 +229,15 @@ class html:
     def makeuri(self, addvars, remove_prefix = None, filename=None):
         new_vars = [ nv[0] for nv in addvars ]
         vars = [ (v, self.var(v))
-                 for v in self.req.vars
+                 for v in self.vars
                  if v[0] != "_" and v not in new_vars ]
         if remove_prefix != None:
             vars = [ i for i in vars if not i[0].startswith(remove_prefix) ]
         vars = vars + addvars
         if filename == None:
-            filename = self.req.myfile + ".py"
+            filename = self.myfile + ".py"
         if vars:
-            return filename + "?" + urlencode_vars(vars)
+            return filename + "?" + self.urlencode_vars(vars)
         else:
             return filename
 
@@ -397,15 +246,15 @@ class html:
 
     def makeuri_contextless(self, vars, filename=None):
         if not filename:
-	    filename = self.req.myfile + ".py"
+	    filename = self.myfile + ".py"
         if vars:
-            return filename + "?" + urlencode_vars(vars)
+            return filename + "?" + self.urlencode_vars(vars)
         else:
             return filename
 
     def image_button(self, varname, title, cssclass = ''):
         if not self.mobile:
-            self.write('<label for="%s" class=image_button>' % varname)
+            self.write('<label for="%s" class="image_button">' % varname)
         self.raw_button(varname, title, cssclass)
         if not self.mobile:
             self.write('</label>')
@@ -415,8 +264,8 @@ class html:
 
     def raw_button(self, varname, title, cssclass=""):
         self.write("<input onfocus=\"if (this.blur) this.blur();\" "
-                   "type=submit name=\"%s\" id=\"%s\" value=\"%s\" "
-                   "class=\"%s\">\n" % \
+                   "type=\"submit\" name=\"%s\" id=\"%s\" value=\"%s\" "
+                   "class=\"%s\" />\n" % \
                    ( varname, varname, title, cssclass))
 
 
@@ -434,18 +283,18 @@ class html:
             title = ' disabled="%s"' % disabled
 
         if not self.mobile:
-            self.write('<label for="%s" class=image_button>' % obj_id)
-        self.write('<input%s%s%s%s value="%s" class=buttonlink type=button onclick="location.href=\'%s\'">' % \
+            self.write('<label for="%s" class="image_button">' % obj_id)
+        self.write('<input%s%s%s%s value="%s" class="buttonlink" type="button" onclick="location.href=\'%s\'" />\n' % \
                 (obj_id, style, title, disabled, text, href))
         if not self.mobile:
             self.write('</label>')
 
     def icon(self, help, icon):
-       self.write('<img align=absmiddle class=icon title="%s" src="images/icon_%s.png">' % (
+       self.write('<img align=absmiddle class=icon title="%s" src="images/icon_%s.png" />' % (
         help, icon))
 
     def empty_icon(self):
-        self.write('<img class=icon src="images/trans.png">')
+        self.write('<img class=icon src="images/trans.png" />')
 
     def icon_button(self, url, help, icon, id="", onclick="", style="", target="", cssclass=""):
         if id:
@@ -499,7 +348,7 @@ class html:
     def context_button(self, title, url, icon=None, hot=False, id=None, bestof=None, hover_title='', fkey=None):
         display = "block"
         if bestof:
-            counts = config.load_user_file("buttoncounts", {})
+            counts = self.get_button_counts()
             weights = counts.items()
             weights.sort(cmp = lambda a,b: cmp(a[1],  b[1]))
             best = dict(weights[-bestof:])
@@ -523,7 +372,7 @@ class html:
         if hover_title:
             self.write(' title="%s"' % hover_title)
         if bestof:
-            self.write(' onmousedown="count_context_button(this); document.location=this.href; " ')
+            self.write(' onclick="count_context_button(this); document.location=this.href; " ')
         if fkey and self.keybindings_enabled:
             title += '<div class=keysym>F%d</div>' % fkey
             self.add_keybinding([html.F1 + (fkey - 1)], "document.location='%s';" % url)
@@ -542,15 +391,19 @@ class html:
     def add_form_var(self, varname):
         self.form_vars.append(varname)
 
-    def text_input(self, varname, default_value = "", cssclass = "text", label = None, id = None, submit = None, **args):
+    def text_input(self, varname, default_value = "", cssclass = "text", label = None, id = None,
+                   submit = None, attrs = {}, **args):
         if default_value == None:
             default_value = ""
         addprops = ""
         add_style = ""
         if "size" in args and args["size"]:
-            addprops += " size=%d" % (args["size"] + 1)
-            if "width:" not in args.get("style", "") and not self.mobile:
-                add_style = "width: %d.8ex; " % args["size"]
+            if args["size"] == "max":
+                add_style = "width: 100%; "
+            else:
+                addprops += " size=\"%d\"" % (args["size"] + 1)
+                if "width:" not in args.get("style", "") and not self.mobile:
+                    add_style = "width: %d.8ex; " % args["size"]
 
         if "type" in args:
             mytype = args["type"]
@@ -572,21 +425,22 @@ class html:
                              'function(e) { if (!e) e = window.event; textinput_enter_submit(e, "%s"); };'
                              % (id, submit))
 
-        value = self.req.vars.get(varname, default_value)
+        value = self.vars.get(varname, default_value)
         error = self.user_errors.get(varname)
         html = ""
         if error:
-            html = "<x class=inputerror>"
+            html = "<x class=\"inputerror\">"
         if label:
             if not id:
                 id = "ti_%s" % varname
             html += '<label for="%s">%s</label>' % (id, label)
 
         if id:
-            addprops += " id='%s'" % id
+            addprops += ' id="%s"' % id
 
-        html += "<input type=%s class=%s value=\"%s\" name=\"%s\"%s>" % \
-                     (mytype, cssclass, attrencode(value), varname, addprops)
+        attributes = ' ' + ' '.join([ '%s="%s"' % (k, v) for k, v in attrs.iteritems() ])
+        html += "<input type=\"%s\" class=\"%s\" value=\"%s\" name=\"%s\"%s%s />\n" % \
+                     (mytype, cssclass, self.attrencode(value), varname, addprops, attributes)
         if error:
             html += "</x>"
             self.set_focus(varname)
@@ -597,14 +451,14 @@ class html:
         self.text_input(varname, default_value, type="password", size = size, **args)
 
     def text_area(self, varname, deflt="", rows=4, cols=30, attrs = {}):
-        value = self.req.vars.get(varname, deflt)
+        value = self.vars.get(varname, deflt)
         error = self.user_errors.get(varname)
         if error:
             self.write("<x class=inputerror>")
 
         attributes = ' ' + ' '.join([ '%s="%s"' % (k, v) for k, v in attrs.iteritems() ])
         self.write("<textarea rows=%d cols=%d name=\"%s\"%s>%s</textarea>\n" % (
-            rows, cols, varname, attributes, attrencode(value)))
+            rows, cols, varname, attributes, self.attrencode(value)))
         if error:
             self.write("</x>")
             self.set_focus(varname)
@@ -619,10 +473,10 @@ class html:
     def select(self, varname, options, deflt="", onchange=None, attrs = {}):
         current = self.var(varname, deflt)
         onchange_code = onchange and " onchange=\"%s\"" % (onchange) or ""
-
+        attrs.setdefault('size', 1)
         attributes = ' ' + ' '.join([ '%s="%s"' % (k, v) for k, v in attrs.iteritems() ])
 
-        self.write("<select%s name=\"%s\" id=\"%s\" size=\"1\"%s>\n" %
+        self.write("<select%s name=\"%s\" id=\"%s\"%s>\n" %
                              (onchange_code, varname, varname, attributes))
         for value, text in options:
             if value == None: value = ""
@@ -805,11 +659,11 @@ class html:
         self.form_vars.append(varname)
 
     def html_head(self, title, javascripts = [], stylesheets = ["pages"]):
-        if not self.req.header_sent:
+        if not self.header_sent:
             self.write(
-                u'''<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN" "http://www.w3.org/TR/html4/loose.dtd">
+                u'''<!DOCTYPE HTML>
 <html><head>
-<meta http-equiv="Content-Type" content="text/html; charset=utf-8">\n''')
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8" />\n''')
             self.write('<title>')
             self.write(title)
             self.write('</title>\n')
@@ -822,16 +676,12 @@ class html:
 
             # Load all specified style sheets and all user style sheets in htdocs/css
             for css in [ "check_mk" ] + stylesheets:
-                self.write('<link rel="stylesheet" type="text/css" href="%s.css">\n' % css)
+                self.write('<link rel="stylesheet" type="text/css" href="%s.css" />\n' % css)
             self.write('<!--[if IE]>\n'
                        '<link rel="stylesheet" href="ie.css" type="text/css" />\n'
                        '<![endif]-->\n')
 
-            for css in self.plugin_stylesheets():
-               self.write('<link rel="stylesheet" type="text/css" href="css/%s">\n' % css)
-
-            if config.custom_style_sheet:
-               self.write('<link rel="stylesheet" type="text/css" href="%s">\n' % config.custom_style_sheet)
+            self.add_custom_style_sheet()
 
             # Load specified Javascript files
             for js in [ "checkmk", "hover" ] + javascripts:
@@ -846,7 +696,7 @@ class html:
 
 
             self.write("</head>\n")
-            self.req.header_sent = True
+            self.header_sent = True
 
     def html_foot(self):
         self.write("</html>\n")
@@ -873,34 +723,20 @@ class html:
                 if self.render_headfoot:
                     self.top_heading(title)
 
-    def top_heading(self, title):
-        if type(self.req.user) == str:
-            login_text = "<b>%s</b> (%s" % (config.user_id, "+".join(config.user_role_ids))
-            if config.debug:
-                if config.get_language():
-                    login_text += "/%s" % config.get_language()
-            login_text += ')'
-        else:
-            login_text = _("not logged in")
+    def top_heading_left(self, title):
         self.write('<table class=header><tr><td width="*" class=heading>')
         self.write('<a href="#" onfocus="if (this.blur) this.blur();" '
                    'onclick="this.innerHTML=\'%s\'; document.location.reload();">%s</a></td>' %
                    (_("Reloading..."), title))
-        self.write('<td style="min-width:240px" class=right><span id=headinfo></span>%s &nbsp; <b id=headertime></b>' %
-                   login_text)
-        self.write("<script language=\"javascript\" type=\"text/javascript\">updateHeaderTime()</script>")
-        try:
-            self.help_visible = config.load_user_file("help", False)  # cache for later usage
-        except:
-            self.help_visible = False
 
+    def top_heading_right(self):
         cssclass = self.help_visible and "active" or "passive"
         self.write('<a id=helpbutton class=%s href="#" onclick="help_toggle();" style="display: none"></a>' %
             cssclass)
         self.write("%s</td></tr></table>" %
                    _("<a href=\"http://mathias-kettner.de\"><img src=\"images/mk_logo_small.gif\"/></a>"))
         self.write("<hr class=header>\n")
-        if config.debug:
+        if self.enable_debug:
             self.write("<div class=urldebug>%s</div>" % self.makeuri([]))
 
     def body_start(self, title='', **args):
@@ -921,7 +757,7 @@ class html:
                            "</script>\n" % (obj, obj, obj))
 
     def bottom_footer(self):
-        if self.req.header_sent:
+        if self.header_sent:
             self.bottom_focuscode()
             corner_text = ""
             corner_text += '<div style="display: %s" id=foot_refresh>%s</div>' % (
@@ -939,13 +775,12 @@ class html:
         if self.have_help:
             self.javascript("help_enable();")
         if self.keybindings_enabled and self.keybindings:
-            self.javascript("""var keybindings = %r;\n
-document.body.onkeydown = keybindings_keydown;
-document.body.onkeyup = keybindings_keyup;
-document.body.onfocus = keybindings_focus;
-""" % self.keybindings)
+            self.javascript("var keybindings = %r;\n"
+                            "document.body.onkeydown = keybindings_keydown;\n"
+                            "document.body.onkeyup = keybindings_keyup;\n"
+                            "document.body.onfocus = keybindings_focus;\n" % self.keybindings)
         if self.final_javascript_code:
-            self.javascript(self.final_javascript_code);
+            self.javascript(self.final_javascript_code)
         self.write("</body></html>\n")
 
     def footer(self):
@@ -957,12 +792,17 @@ document.body.onfocus = keybindings_focus;
         self.status_icons[img] = tooltip
 
     def render_status_icons(self):
-        h = ""
-        if True: # self.req.method == "GET":
-            h += '<a target="_top" href="%s"><img class=statusicon src="images/status_frameurl.png" title="%s"></a>\n' % \
-                 (self.makeuri([]), _("URL to this frame"))
-            h += '<a target="_top" href="%s"><img class=statusicon src="images/status_pageurl.png" title="%s"></a>\n' % \
-                 ("index.py?" + urlencode_vars([("start_url", self.makeuri([]))]), _("URL to this page including sidebar"))
+        h = '<a target="_top" href="%s"><img class=statusicon src="images/status_frameurl.png" title="%s"></a>\n' % \
+             (self.makeuri([]), _("URL to this frame"))
+        h += '<a target="_top" href="%s"><img class=statusicon src="images/status_pageurl.png" title="%s"></a>\n' % \
+             ("index.py?" + self.urlencode_vars([("start_url", self.makeuri([]))]), _("URL to this page including sidebar"))
+
+        if self.myfile == "view":
+            # h += '<a target="_top" href="%s"><img class=statusicon src="images/status_frameurl.png" title="%s"></a>\n' % \
+            #     (self.makeuri([("output_format", "json_export")]), _("Export as JSON"))
+            h += '<a target="_top" href="%s"><img class=statusicon src="images/icon_download_csv.png" title="%s"></a>\n' % \
+                 (self.makeuri([("output_format", "csv_export")]), _("Export as CSV"))
+
         for img, tooltip in self.status_icons.items():
             h += '<img class=statusicon src="images/status_%s.png" title="%s">\n' % (img, tooltip)
         return h
@@ -974,7 +814,7 @@ document.body.onfocus = keybindings_focus;
             self.write("<div class=error>%s</div>\n" % msg)
         else:
             self.write(_("ERROR: "))
-            self.write(strip_tags(msg))
+            self.write(self.strip_tags(msg))
             self.write("\n")
         if self.mobile:
             self.write('</center>')
@@ -986,7 +826,7 @@ document.body.onfocus = keybindings_focus;
             self.write("<div class=warning>%s</div>\n" % msg)
         else:
             self.write(_("WARNING: "))
-            self.write(strip_tags(msg))
+            self.write(self.strip_tags(msg))
             self.write("\n")
         if self.mobile:
             self.write('</center>')
@@ -998,7 +838,7 @@ document.body.onfocus = keybindings_focus;
             self.write("<div class=success>%s</div>\n" % msg)
         else:
             self.write(_("MESSAGE: "))
-            self.write(strip_tags(msg))
+            self.write(self.strip_tags(msg))
             self.write("\n")
         if self.mobile:
             self.write('</center>')
@@ -1013,72 +853,53 @@ document.body.onfocus = keybindings_focus;
             self.write(text.strip())
             self.write('</div>')
 
-    def check_limit(self, rows, limit):
-        count = len(rows)
-        if limit != None and count >= limit + 1:
-            text = _("Your query produced more than %d results. ") % limit
-            if self.var("limit", "soft") == "soft" and config.may("general.ignore_soft_limit"):
-                text += '<a href="%s">%s</a>' % \
-                             (self.makeuri([("limit", "hard")]), _('Repeat query and allow more results.'))
-            elif self.var("limit") == "hard" and config.may("general.ignore_hard_limit"):
-                text += '<a href="%s">%s</a>' % \
-                             (self.makeuri([("limit", "none")]), _('Repeat query without limit.'))
-            self.show_warning(text)
-            del rows[limit:]
-            return False
-        return True
-
     def do_actions(self):
         return self.var("_do_actions") not in [ "", None, _("No") ]
 
     def set_focus(self, varname):
         self.focus_object = (self.form_name, varname)
 
-    def has_var(self, varname):
-        return varname in self.req.vars
 
-    def var(self, varname, deflt = None):
-        return self.req.vars.get(varname, deflt)
 
     def var_utf8(self, varname, deflt = None):
-        val = self.req.vars.get(varname, deflt)
+        val = self.vars.get(varname, deflt)
         if val == None:
             return val
         else:
             return val.decode("utf-8")
 
     # Return all values of a variable that possible occurs more
-    # than once in the URL. note: req.listvars does contain those
+    # than once in the URL. note: self.listvars does contain those
     # variable only, if the really occur more than once.
     def list_var(self, varname):
-        if varname in self.req.listvars:
-            return self.req.listvars[varname]
-        elif varname in self.req.vars:
-            return [self.req.vars[varname]]
+        if varname in self.listvars:
+            return self.listvars[varname]
+        elif varname in self.vars:
+            return [self.vars[varname]]
         else:
             return []
 
     # Adds a variable to listvars and also set it
     def add_var(self, varname, value):
-        self.req.listvars.setdefault(varname, [])
-        self.req.listvars[varname].append(value)
-        self.req.vars[varname] = value
+        self.listvars.setdefault(varname, [])
+        self.listvars[varname].append(value)
+        self.vars[varname] = value
 
     def set_var(self, varname, value):
         if value == None:
             self.del_var(varname)
         else:
-            self.req.vars[varname] = value
+            self.vars[varname] = value
 
     def del_var(self, varname):
-        if varname in self.req.vars:
-            del self.req.vars[varname]
-        if varname in self.req.listvars:
-            del self.req.listvars[varname]
+        if varname in self.vars:
+            del self.vars[varname]
+        if varname in self.listvars:
+            del self.listvars[varname]
 
     def del_all_vars(self):
-        self.req.vars = {}
-        self.req.listvars = {}
+        self.vars = {}
+        self.listvars = {}
 
     def javascript(self, code):
         self.write("<script language=\"javascript\">\n%s\n</script>\n" % code)
@@ -1102,7 +923,7 @@ document.body.onfocus = keybindings_focus;
     # time we remove all entries from that list that are older
     # then one week.
     def invalidate_transid(self, id):
-        used_ids = config.load_user_file("transids", [])
+        used_ids = self.load_transids()
         new_ids = []
         now = time.time()
         for used_id in used_ids:
@@ -1110,7 +931,7 @@ document.body.onfocus = keybindings_focus;
             if now - int(timestamp) < 604800: # 7 * 24 hours
                 new_ids.append(used_id)
         used_ids.append(id)
-        config.save_user_file("transids", used_ids)
+        self.save_transids(used_ids)
 
     # Checks, if the current transaction is valid, i.e. now
     # browser reload. The HTML variable _transid must be present.
@@ -1131,7 +952,7 @@ document.body.onfocus = keybindings_focus;
             return False
 
         # Now check, if this id is not yet invalidated
-        return id not in config.load_user_file("transids", [])
+        return id not in self.load_transids()
 
     # Checks, if the current page is a transation, i.e. something
     # that is secured by a transid (such as a submitted form)
@@ -1186,24 +1007,150 @@ document.body.onfocus = keybindings_focus;
                   '<param name="autostart" value="true">\n'
                   '<param name="playcount" value="1">\n'
                   '</object>\n' % (url, url, url))
-        if config.debug:
+        if self.enable_debug:
             self.write("(playing sound %s)" % url)
 
     def apache_user(self):
         return pwd.getpwuid( os.getuid() )[ 0 ]
 
-    def omd_mode(self):
-        # Load mod_python env into regular environment
-        os.environ.update(self.req.subprocess_env)
 
-        omd_mode = None
-        omd_site = None
-        if 'OMD_SITE' in os.environ:
-            omd_site = os.environ['OMD_SITE']
-            omd_mode = 'shared'
-            if omd_site == self.apache_user():
-                omd_mode = 'own'
-        return (omd_mode, omd_site)
+    def debug(self, *x):
+        import pprint
+        for element in x:
+            self.lowlevel_write("<pre>%s</pre>\n" % pprint.pformat(element))
+
+
+    def debug_vars(self):
+        self.lowlevel_write('<table onmouseover="this.style.display=\'none\';" class=debug_vars>')
+        self.lowlevel_write("<tr><th colspan=2>POST / GET Variables</th></tr>")
+        for name, value in sorted(self.vars.items()):
+            self.write("<tr><td class=left>%s</td><td class=right>%s</td></tr>\n" % (name, value))
+        self.write("</ul>")
+
+    def var(self, varname, deflt = None):
+        return self.vars.get(varname, deflt)
+
+    def has_var(self, varname):
+        return varname in self.vars
+
+    def has_cookie(self, varname):
+        return varname in self.cookies
+
+    def get_cookie_names(self):
+        return self.cookies.keys()
+
+    def cookie(self, varname, deflt):
+        try:
+            return self.cookies[varname].value
+        except:
+            return deflt
+
+    # Keyboard control
+    def add_keybinding(self, keylist, jscode):
+        self.keybindings.append([keylist, jscode])
+
+    def add_keybindings(self, bindings):
+        self.keybindings += bindings
+
+    def disable_keybindings(self):
+        self.keybindings_enabled = False
+
+    # From here: Former not class functions
+
+    # Encode HTML attributes: replace " with &quot;, also replace
+    # < and >. This code is slow.
+    def attrencode(self, value):
+        if type(value) == int:
+            return str(value)
+        new = ""
+        for c in value:
+            if c == '"':
+                new += "&quot;"
+            elif c == '<':
+                new += "&lt;"
+            elif c == '>':
+                new += "&gt;"
+            else:
+                new += c
+        return new
+
+
+
+    # This function returns a str object, never unicode!
+    # Beware: this code is crucial for the performance of Multisite!
+    # Changing from the self coded urlencode to urllib.quote
+    # is saving more then 90% of the total HTML generating time
+    # on more complex pages!
+    def urlencode_vars(self, vars):
+        output = []
+        for varname, value in vars:
+            if type(value) == int:
+                value = str(value)
+            elif type(value) == unicode:
+                value = value.encode("utf-8")
+
+            try:
+                # urllib is not able to encode non-Ascii characters. Yurks
+                output.append(varname + '=' + urllib.quote(value))
+            except:
+                output.append(varname + '=' + self.urlencode(value)) # slow but working
+
+        return '&'.join(output)
+
+    def urlencode(self, value):
+        if type(value) == unicode:
+            value = value.encode("utf-8")
+        elif value == None:
+            return ""
+        ret = ""
+        for c in value:
+            if c == " ":
+                c = "+"
+            elif ord(c) <= 32 or ord(c) > 127 or c in [ '#', '+', '"', "'", "=", "&", ":", "%" ]:
+                c = "%%%02x" % ord(c)
+            ret += c
+        return ret
+
+    def u8(self, c):
+        if ord(c) > 127:
+            return "&#%d;" % ord(c)
+        else:
+            return c
+
+    def utf8_to_entities(self, text):
+        if type(text) != unicode:
+            return text
+        else:
+            return text.encode("utf-8")
+
+        # Old code is soooooooo slow...
+        n = ""
+        for c in text:
+            n += self.u8(c)
+        return n
+
+    # remove all HTML-tags
+    def strip_tags(self, ht):
+        while True:
+            x = ht.find('<')
+            if x == -1:
+                break
+            y = ht.find('>', x)
+            if y == -1:
+                break
+            ht = ht[0:x] + ht[y+1:]
+        return ht
+
+    def strip_scripts(self, ht):
+        while True:
+            x = ht.find('<script')
+            if x == -1:
+                break
+            y = ht.find('</script>')
+            if y == -1:
+                break
+            ht = ht[0:x] + ht[y+9:]
+        return ht
 
     def begin_foldable_container(self, treename, id, isopen, title, indent = True, first = False):
         self.folding_indent = indent
@@ -1247,67 +1194,62 @@ document.body.onfocus = keybindings_focus;
         if self.folding_indent != "nform":
             self.write("</ul>")
 
-    def debug(self, *x):
-        import pprint
-        for element in x:
-            self.lowlevel_write("<pre>%s</pre>\n" % pprint.pformat(element))
+    def begin_foldable_container(self, treename, id, isopen, title, indent = True, first = False):
+        self.folding_indent = indent
+        # try to get persisted state of tree
+        tree_state = self.get_tree_states(treename)
 
-    # Debug logging directly to apache error_log
-    # Even if this is for debugging purpose, set the log-level to WARN in all cases
-    # since the apache in OMD sites has LogLevel set to "warn" by default which would
-    # suppress messages generated here. Again, this is only for debugging during
-    # development, so this should be no problem for regular users.
-    def log(self, msg):
-        if type(msg) != str:
-            msg = repr(msg)
-        self.req.log_error(msg, apache.APLOG_WARNING)
+        if id in tree_state:
+            isopen = tree_state[id] == "on"
 
-    def debug_vars(self):
-        self.lowlevel_write('<table onmouseover="this.style.display=\'none\';" class=debug_vars>')
-        self.lowlevel_write("<tr><th colspan=2>POST / GET Variables</th></tr>")
-        for name, value in sorted(self.req.vars.items()):
-            self.write("<tr><td class=left>%s</td><td class=right>%s</td></tr>\n" % (name, value))
-        self.write("</ul>")
+        img_num = isopen and "90" or "00"
+        onclick = ' onclick="toggle_foldable_container(\'%s\', \'%s\')"' % (treename, id)
+        onclick += ' onmouseover="this.style.cursor=\'pointer\';" '
+        onclick += ' onmouseout="this.style.cursor=\'auto\';" '
 
-    # Needs to set both, headers_out and err_headers_out to be sure to send
-    # the header on all responses
-    def set_http_header(self, key, val):
-        self.req.headers_out.add(key, val)
-        self.req.err_headers_out.add(key, val)
+        if indent == "nform":
+            self.write('<tr class=heading><td id="nform.%s.%s" %s colspan=2>' % (treename, id, onclick))
+            self.write('%s</td></tr>' % title)
+        else:
+            self.write('<img align=absbottom class="treeangle" id="treeimg.%s.%s" '
+                       'src="images/tree_%s.png" %s>' %
+                    (treename, id, img_num, onclick))
+            if title.startswith('<'): # custom HTML code
+                self.write(title)
+                if indent != "form":
+                    self.write("<br>")
+            else:
+                self.write('<b class="treeangle title" class=treeangle %s>%s</b><br>' %
+                         (onclick, title))
 
-    def has_cookie(self, varname):
-        return varname in self.req.cookies
+            indent_style = "padding-left: %dpx; " % (indent == True and 15 or 0)
+            if indent == "form":
+                self.write("</td></tr></table>")
+                indent_style += "margin: 0; "
+            self.write('<ul class="treeangle %s" style="%s" id="tree.%s.%s">' %
+                 (isopen and "open" or "closed", indent_style,  treename, id))
 
-    def get_cookie_names(self):
-        return self.req.cookies.keys()
+        # give caller information about current toggling state (needed for nform)
+        return isopen
 
-    def cookie(self, varname, deflt):
-        try:
-            return self.req.cookies[varname].value
-        except:
-            return deflt
+    def end_foldable_container(self):
+        if self.folding_indent != "nform":
+            self.write("</ul>")
 
-    def set_cookie(self, varname, value, expires = None):
-        c = Cookie.Cookie(varname, value, path = '/')
-        if expires is not None:
-            c.expires = expires
+    def get_tree_states(self,tree):
+        self.load_tree_states()
+        return self.treestates.get(tree, {})
 
-        if not self.req.headers_out.has_key("Set-Cookie"):
-            self.req.headers_out.add("Cache-Control", 'no-cache="set-cookie"')
-            self.req.err_headers_out.add("Cache-Control", 'no-cache="set-cookie"')
+    def set_tree_state(self, tree, key, val):
+        self.load_tree_states()
 
-        self.req.headers_out.add("Set-Cookie", str(c))
-        self.req.err_headers_out.add("Set-Cookie", str(c))
+        if tree not in self.treestates:
+            self.treestates[tree] = {}
 
-    def del_cookie(self, varname):
-        self.set_cookie(varname, '', time.time() - 60)
+        self.treestates[tree][key] = val
 
-    # Keyboard control
-    def add_keybinding(self, keylist, jscode):
-        self.keybindings.append([keylist, jscode])
+    def set_tree_states(self, tree, val):
+        self.load_tree_states()
+        self.treestates[tree] = val
 
-    def add_keybindings(self, bindings):
-        self.keybindings += bindings
 
-    def disable_keybindings(self):
-        self.keybindings_enabled = False

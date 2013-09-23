@@ -1,6 +1,6 @@
-title: State of hardware sensors on VMWare ESX host system
+title: VMWare ESX host systems: Hardware sensors
 agents: vsphere
-author: Mathias Kettner <mk@mathias-kettner.de>
+catalog: os/hardware
 license: GPL
 distribution: check_mk
 description:

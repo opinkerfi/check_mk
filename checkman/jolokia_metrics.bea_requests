@@ -1,6 +1,6 @@
-title: Requests to JVM sessions on BEA Weblogic
+title: BEA Weblogic: Requests to JVM sessions
 agents: linux
-author: Mathias Kettner <mk@mathias-kettner.de>
+catalog: app/java
 license: GPL
 distribution: check_mk
 description:

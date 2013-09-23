@@ -35,9 +35,7 @@
 #   | Configuration variables for main.mk                                  |
 #   +----------------------------------------------------------------------+
 
-group = _("Configuration of Checks")
-
-group = _("Multisite & WATO")
+group = _("Status GUI (Multisite)")
 
 register_configvar(group,
     "debug",
@@ -171,6 +169,17 @@ register_configvar(group,
     domain = "multisite")
 
 register_configvar(group,
+    "table_row_limit",
+    Integer(title = _("Limit the number of rows shown in tables"),
+            help = _("Several pages which use tables to show data in rows, like the "
+                     "\"Users\" configuration page, can be configured to show "
+                     "only a limited number of rows when accessing the pages."),
+            minvalue = 1,
+            default_value = 100,
+            unit = _('rows')),
+    domain = "multisite")
+
+register_configvar(group,
     "start_url",
     TextAscii(title = _("Start-URL to display in main frame"),
               help = _("When you point your browser to the Multisite GUI, usually the dashboard "
@@ -191,41 +200,28 @@ register_configvar(group,
     domain = "multisite")
 
 register_configvar(group,
-    "wato_hide_filenames",
-    Checkbox(title = _("Hide internal folder names in WATO"),
-             label = _("hide folder names"),
-             help = _("When enabled, then the internal names of WATO folder in the filesystem "
-                      "are not shown. They will automatically be derived from the name of the folder "
-                      "when a new folder is being created. Disable this option if you want to see and "
-                      "set the filenames manually."),
-             default_value = True),
+    "pagetitle_date_format",
+    DropdownChoice(
+        title = _("Date format for page titles"),
+        help = _("When enabled, the headline of each page also displays "\
+                 "the date in addition the time."),
+        choices = [
+            (None,         _("Do not display a date")),
+            ('yyyy-mm-dd', _("YYYY-MM-DD")),
+            ('dd.mm.yyyy', _("DD.MM.YYYY")),
+        ],
+        default_value = None
+    ),
     domain = "multisite")
 
 register_configvar(group,
-    "wato_hide_hosttags",
-    Checkbox(title = _("Hide hosttags in WATO folder view"),
-             label = _("hide hosttags"),
-             help = _("When enabled, hosttags are no longer shown within the WATO folder view"),
-             default_value = False),
-    domain = "multisite")
-
-register_configvar(group,
-    "wato_hide_varnames",
-    Checkbox(title = _("Hide names of configuration variables"),
-             label = _("hide variable names"),
-             help = _("When enabled, internal configuration variable names of Check_MK are hidded "
-                      "from the user (for example in the rule editor)"),
-             default_value = True),
-    domain = "multisite")
-
-register_configvar(group,
-    "wato_max_snapshots",
-    Integer(title = _("Number of configuration snapshots to keep"),
-            help = _("Whenever you successfully activate changes a snapshot of the configuration "
-                     "will be created. You can also create snapshots manually. WATO will delete old "
-                     "snapshots when the maximum number of snapshots is reached."),
-             minvalue = 1,
-             default_value = 50),
+    "multisite_draw_ruleicon",
+    Checkbox(title = _("Show icon for WATO parameter editor"),
+             label = _("Show WATO icon"),
+             help = _("When enabled a rule editor icon is displayed for each "
+                      "service in the multisite views. It is only displayed if the user "
+                      "does have the permission to edit rules"),
+            default_value = False),
     domain = "multisite")
 
 register_configvar(group,
@@ -255,17 +251,50 @@ register_configvar(group,
     domain = "multisite")
 
 register_configvar(group,
-    "wato_activation_method",
-    DropdownChoice(
-        title = _("WATO restart mode for Nagios"),
-        help = _("Should WATO restart or reload Nagios when activating changes"),
-        choices = [
-            ('restart', _("Restart")),
-            ('reload' , _("Reload") ),
-            ]),
-    domain = "multisite"
-    )
+    "sidebar_notify_interval",
+    Optional(
+        Float(
+            minvalue = 10.0,
+            default_value = 60.0,
+            unit = "sec",
+            display_format = "%.1f"
+        ),
+        title = _("Interval of sidebar popup notification updates"),
+        help = _("The sidebar can be configured to regularly check for pending popup notififcations. "
+                 "This is disabled by default."),
+        none_label = _('(disabled)'),
+    ),
+    domain = "multisite")
 
+register_configvar(group,
+    "adhoc_downtime",
+    Optional(
+        Dictionary(
+            optional_keys = False,
+            elements = [
+                ("duration", Integer(
+                    title = _("Duration"),
+                    help  = _("The duration in minutes of the adhoc downtime."),
+                    minvalue = 1,
+                    unit  = _("minutes"),
+                    default_value = 60,
+                    )),
+                ("comment", TextUnicode(
+                    title = _("Adhoc comment"),
+                    help    = _("The comment which is automatically sent with an adhoc downtime"),
+                    size = 80,
+                    allow_empty = False
+                    )),
+            ],
+        ),
+        title = _("Adhoc downtime"),
+        label = _("Enable adhoc downtime"),
+        help  = _("This setting allows to set an adhoc downtime comment and its duration. "
+                  "When enabled a new button <tt>Adhoc downtime for xx minutes</tt> will "
+                  "be available in the command form"),
+    ),
+    domain = "multisite",
+)
 
 register_configvar(group,
     "bi_precompile_on_demand",
@@ -319,7 +348,107 @@ register_configvar(group,
     ),
     domain = "multisite")
 
-#   .----------------------------------------------------------------------.
+register_configvar(group,
+    "staleness_threshold",
+    Float(
+        title = _('Staleness value to mark hosts / services stale'),
+        help  = _('The staleness value of a host / service is calculated by measuring the '
+                  'configured check intervals a check result is old. A value of 1.5 means the '
+                  'current check result has been gathered one and a half check intervals of an object. '
+                  'This would mean 90 seconds in case of a check which is checked each 60 seconds.'),
+        minvalue = 1,
+        default_value = 1.5,
+    ),
+    domain = "multisite",
+)
+
+
+#   .--WATO----------------------------------------------------------------.
+#   |                     __        ___  _____ ___                         |
+#   |                     \ \      / / \|_   _/ _ \                        |
+#   |                      \ \ /\ / / _ \ | || | | |                       |
+#   |                       \ V  V / ___ \| || |_| |                       |
+#   |                        \_/\_/_/   \_\_| \___/                        |
+#   |                                                                      |
+#   '----------------------------------------------------------------------'
+
+group = _("Configuration GUI (WATO)")
+
+register_configvar(group,
+    "wato_max_snapshots",
+    Integer(title = _("Number of configuration snapshots to keep"),
+            help = _("Whenever you successfully activate changes a snapshot of the configuration "
+                     "will be created. You can also create snapshots manually. WATO will delete old "
+                     "snapshots when the maximum number of snapshots is reached."),
+             minvalue = 1,
+             default_value = 50),
+    domain = "multisite")
+
+register_configvar(group,
+    "wato_activation_method",
+    DropdownChoice(
+        title = _("WATO restart mode for Nagios"),
+        help = _("Should WATO restart or reload Nagios when activating changes"),
+        choices = [
+            ('restart', _("Restart")),
+            ('reload' , _("Reload") ),
+            ]),
+    domain = "multisite"
+    )
+
+
+register_configvar(group,
+    "wato_hide_filenames",
+    Checkbox(title = _("Hide internal folder names in WATO"),
+             label = _("hide folder names"),
+             help = _("When enabled, then the internal names of WATO folder in the filesystem "
+                      "are not shown. They will automatically be derived from the name of the folder "
+                      "when a new folder is being created. Disable this option if you want to see and "
+                      "set the filenames manually."),
+             default_value = True),
+    domain = "multisite")
+
+
+register_configvar(group,
+    "wato_hide_hosttags",
+    Checkbox(title = _("Hide hosttags in WATO folder view"),
+             label = _("hide hosttags"),
+             help = _("When enabled, hosttags are no longer shown within the WATO folder view"),
+             default_value = False),
+    domain = "multisite")
+
+
+register_configvar(group,
+    "wato_hide_varnames",
+    Checkbox(title = _("Hide names of configuration variables"),
+             label = _("hide variable names"),
+             help = _("When enabled, internal configuration variable names of Check_MK are hidded "
+                      "from the user (for example in the rule editor)"),
+             default_value = True),
+    domain = "multisite")
+
+
+register_configvar(group,
+    "wato_hide_help_in_lists",
+    Checkbox(title = _("Hide help text of rules in list views"),
+             label = _("hide help text"),
+             help = _("When disabled, WATO shows the help texts of the rules also in the list views."),
+             default_value = True),
+    domain = "multisite")
+
+register_configvar(group,
+    "wato_use_git",
+    Checkbox(title = _("Use GIT version control for WATO"),
+             label = _("enable GIT version control"),
+             help = _("When enabled, all changes of configuration files are tracked with the "
+                      "version control system GIT. You need to make sure that git is installed "
+                      "on your Nagios server. The version history currently cannot be viewed "
+                      "via the web GUI. Please use git command line tools within your Check_MK "
+                      "configuration directory."),
+             default_value = False),
+    domain = "multisite")
+
+#GUI----------------------------------------------------------------------.
 #   |          _   _                 __  __                 _              |
 #   |         | | | |___  ___ _ __  |  \/  | __ _ _ __ ___ | |_            |
 #   |         | | | / __|/ _ \ '__| | |\/| |/ _` | '_ ` _ \| __|           |
@@ -348,6 +477,25 @@ register_configvar(group,
 )
 
 register_configvar(group,
+    "userdb_automatic_sync",
+    ListChoice(
+        title = _('Automatic User Synchronization'),
+        help  = _('By default the users are synchronized automatically in several situations. '
+                  'The sync is started when opening the "Users" page in configuration and '
+                  'during each page rendering. Each connector can then specify if it wants to perform '
+                  'any actions. For example the LDAP connector will start the sync once the cached user '
+                  'information are too old.'),
+        default_value = [ 'wato_users', 'page' ],
+        choices       = [
+            ('wato_users', 'When opening the users configuration page'),
+            ('page',       'During regular page processing'),
+        ],
+        allow_empty   = True,
+    ),
+    domain = "multisite",
+)
+
+register_configvar(group,
     "ldap_connection",
     Dictionary(
         title = _("LDAP Connection Settings"),
@@ -358,6 +506,15 @@ register_configvar(group,
                 title = _("LDAP Server"),
                 help = _("Set the host address of the LDAP server. Might be an IP address or "
                          "resolvable hostname."),
+                allow_empty = False,
+            )),
+            ('failover_servers', ListOfStrings(
+                title = _('Failover Servers'),
+                help = _('When the connection to the first server fails with connect specific errors '
+                         'like timeouts or some other network related problems, the connect mechanism '
+                         'will try to use this server instead of the server configured above. If you '
+                         'use persistent connections (default), the connection is being used until the '
+                         'LDAP is not reachable or the local webserver is restarted.'),
                 allow_empty = False,
             )),
             ("port", Integer(
@@ -381,7 +538,7 @@ register_configvar(group,
                 totext = _("Don't use persistent LDAP connections."),
             )),
             ("connect_timeout", Float(
-                title = _("LDAP Connect Timeout (sec)"),
+                title = _("Connect Timeout (sec)"),
                 help = _("Timeout for the initial connection to the LDAP server in seconds."),
                 minvalue = 1.0,
                 default_value = 2.0,
@@ -404,7 +561,7 @@ register_configvar(group,
                 ],
             )),
             ("bind", Tuple(
-                title = _("LDAP Bind Credentials"),
+                title = _("Bind Credentials"),
                 help  = _("Set the credentials to be used to connect to the LDAP server. The "
                           "used account must not be allowed to do any changes in the directory "
                           "the whole connection is read only. "
@@ -417,7 +574,7 @@ register_configvar(group,
                         title = _("Bind DN"),
                         help  = _("Specify the distinguished name to be used to bind to "
                                   "the LDAP directory."),
-                        size = 80,
+                        size = 63,
                     ),
                     Password(
                         title = _("Bind Password"),
@@ -426,10 +583,24 @@ register_configvar(group,
                     ),
                 ],
             )),
+            ("page_size", Integer(
+                title = _("Page Size"),
+                help = _("LDAP searches can be performed in paginated mode, for example to improve "
+                         "the performance. This enables pagination and configures the size of the pages."),
+                minvalue = 1,
+                default_value = 100,
+            )),
+            ("response_timeout", Integer(
+                title = _("Response Timeout (sec)"),
+                help = _("Timeout for LDAP query responses."),
+                minvalue = 0,
+                default_value = 5,
+            )),
         ],
-        optional_keys = ['no_persistent', 'use_ssl', 'bind', ],
+        optional_keys = ['no_persistent', 'use_ssl', 'bind', 'page_size', 'response_timeout', 'failover_servers'],
     ),
     domain = "multisite",
+    in_global_settings = False,
 )
 
 register_configvar(group,
@@ -464,6 +635,19 @@ register_configvar(group,
                 size = 80,
                 default_value = lambda: userdb.ldap_filter('users', False),
             )),
+            ("filter_group", LDAPDistinguishedName(
+                title = _("Filter Group"),
+                help = _("Using this option you can define the DN of a group object which is used to filter the users. "
+                         "Only members of this group will then be synchronized. This is a filter which can be "
+                         "used to extend capabilities of the regular \"Search Filter\". Using the search filter "
+                         "you can only define filters which directly apply to the user objects. To filter by "
+                         "group memberships, you can use the \"memberOf\" attribute of the user objects in some "
+                         "directories. But some directories do not have such attributes because the memberships "
+                         "are stored in the group objects as e.g. \"member\" attributes. You should use the "
+                         "regular search filter whenever possible and only use this filter when it is really "
+                         "neccessary."),
+                size = 80,
+            )),
             ("user_id", TextAscii(
                 title = _("User-ID Attribute"),
                 help  = _("The attribute used to identify the individual users. It must have "
@@ -478,9 +662,10 @@ register_configvar(group,
                 totext = _("Enforce lower case User-IDs."),
             )),
         ],
-        optional_keys = ['scope', 'filter', 'user_id', 'lower_user_ids'],
+        optional_keys = ['scope', 'filter', 'filter_group', 'user_id', 'lower_user_ids'],
     ),
     domain = "multisite",
+    in_global_settings = False,
 )
 
 register_configvar(group,
@@ -525,6 +710,7 @@ register_configvar(group,
         optional_keys = ['scope', 'filter', 'member'],
     ),
     domain = "multisite",
+    in_global_settings = False,
 )
 
 register_configvar(group,
@@ -537,8 +723,10 @@ register_configvar(group,
                   'user accounts for gathering their attributes. The user options which get imported '
                   'into Check_MK from LDAP will be locked in WATO.'),
         elements = userdb.ldap_attribute_plugins_elements,
+        default_keys = ['email', 'alias', 'auth_expire' ],
     ),
     domain = "multisite",
+    in_global_settings = False,
 )
 
 register_configvar(group,
@@ -552,6 +740,7 @@ register_configvar(group,
         default_value = 300,
     ),
     domain = "multisite",
+    in_global_settings = False,
 )
 
 register_configvar(group,
@@ -565,7 +754,26 @@ register_configvar(group,
           label = _("Activate logging of LDAP transactions into a logfile"),
           help = _("If this option is used and set to a filename, Check_MK will create a logfile "
                    "containing details about connecting to LDAP and the single transactions.")),
-    domain = "multisite")
+    domain = "multisite",
+    in_global_settings = False,
+)
+
+register_configvar(group,
+    "lock_on_logon_failures",
+    Optional(
+        Integer(
+            label = _("Number of logon failures to lock the account"),
+            default_value = 3,
+            minvalue = 1,
+        ),
+        none_value = False,
+        title = _("Lock user accounts after N logon failures"),
+        label = _("Activate automatic locking of user accounts"),
+        help = _("This options enables automatic locking of user account after "
+                 "N logon failures. One successful login resets the failure counter.")
+    ),
+    domain = "multisite"
+)
 
 
 def list_roles():
@@ -602,6 +810,18 @@ register_configvar(group,
         optional_keys = [],
     ),
     domain = "multisite",
+)
+
+register_configvar(group,
+    "save_user_access_times",
+    Checkbox(
+        title = _("Save last access times of users"),
+        label = _("Save the time of the latest user activity"),
+        help = _("When enabled, the time of the last access is stored for each user. The last "
+                 "activity is shown on the users page."),
+        default_value = False
+    ),
+    domain = "multisite"
 )
 
 #   .----------------------------------------------------------------------.
@@ -728,6 +948,41 @@ register_configvar(group,
                       "It provides the following fields: user_time, system_time, children_user_time "
                       "and children_system_time")),
     need_restart = True)
+
+register_configvar(group,
+    "use_dns_cache",
+    Checkbox(
+        title = _("Use DNS lookup cache"),
+        label = _("Prevent DNS lookups by use of a cache file"),
+        help = _("When this option is enabled (which is the default), then Check_MK tries to "
+                 "prevent IP address lookups during the configuration generation. This can speed "
+                 "up this process greatly when you have a larger number of hosts. The cache is stored "
+                 "in a simple file. Note: when the cache is enabled then changes of the IP address "
+                 "of a host in your name server will not be detected immediately. If you need an "
+                 "immediate update then simply disable the cache once, activate the changes and "
+                 "enabled it again. OMD based installations automatically update the cache once "
+                 "a day."),
+        default_value = True,
+    ),
+    need_restart = True
+)
+
+register_configvar(group,
+    "use_inline_snmp",
+    Checkbox(
+        title = _("Use Inline SNMP (EXPERIMENTAL)"),
+        label = _("Enable inline SNMP (directly use net-snmp libraries)"),
+        help = _("In older versions Check_MK used command line calls of net-snmp "
+                 "tools like snmpget or snmpwalk. For each request a new command line "
+                 "program had to be executed. The new default is the inline SNMP implementation "
+                 "which calls the net-snmp libraries directly via its python bindings. This "
+                 "should increase the performance of SNMP checks in a significant way. "
+                 "For compatibility the classic SNMP integration is still available and can be "
+                 "enabled here."),
+        default_value = False
+    ),
+    need_restart = True
+)
 
 group = _("Inventory - automatic service detection")
 
@@ -912,7 +1167,6 @@ register_configvar(group,
                       "as adding the option <tt>-u</tt> to each call of <tt>-I</tt> on the "
                       "command line.")))
 
-
 group = _("Check configuration")
 
 
@@ -1013,7 +1267,10 @@ register_rule(group,
     "host_groups",
     GroupSelection(
         "host",
-        title = _("Assignment of hosts to host groups")),
+        title = _("Assignment of hosts to host groups"),
+        help = _("Hosts can be grouped together into host groups. The most common use case "
+                 "is to put hosts which belong together in a host group to make it possible "
+                 "to get them listed together in the status GUI.")),
     match = "all")
 
 register_rule(group,
@@ -1055,28 +1312,32 @@ register_rule(group,
 
 register_rule(group,
     "extra_service_conf:check_interval",
-    Integer(title = _("Normal check interval for service checks"),
-            help = _("Check_MK usually uses an interval of one minute for the active Check_MK "
-                     "check and for legacy checks. Here you can specify a larger interval. Please "
-                     "note, that this setting only applies to active checks (those with the "
-                     "%s reschedule button). If you want to change the check interval of "
-                     "the Check_MK service only, specify <tt><b>Check_MK$</b></tt> in the list "
-                     "of services.") % '<img class="icon docu" src="images/icon_reload.gif">',
-            minvalue = 1,
-            label = _("minutes")),
+    Transform(
+        Age(minvalue=1, default_value=60),
+        forth = lambda v: int(v * 60),
+        back = lambda v: float(v) / 60.0,
+        title = _("Normal check interval for service checks"),
+        help = _("Check_MK usually uses an interval of one minute for the active Check_MK "
+                 "check and for legacy checks. Here you can specify a larger interval. Please "
+                 "note, that this setting only applies to active checks (those with the "
+                 "%s reschedule button). If you want to change the check interval of "
+                 "the Check_MK service only, specify <tt><b>Check_MK$</b></tt> in the list "
+                 "of services.") % '<img class="icon docu" src="images/icon_reload.gif">'),
     itemtype = "service")
 
 register_rule(group,
     "extra_service_conf:retry_interval",
-    Integer(title = _("Retry check interval for service checks"),
-            help = _("This setting is relevant if you have set the maximum number of check "
-                     "attempts to a number greater than one. In case a service check is not OK "
-                     "and the maximum number of check attempts is not yet reached, it will be "
-                     "rescheduled with this interval. The retry interval is usually set to a smaller "
-                     "value than the normal interval.<br><br>This setting only applies to "
-                     "active checks."),
-            minvalue = 1,
-            label = _("minutes")),
+    Transform(
+        Age(minvalue=1, default_value=60),
+        forth = lambda v: int(v * 60),
+        back = lambda v: float(v) / 60.0,
+        title = _("Retry check interval for service checks"),
+        help = _("This setting is relevant if you have set the maximum number of check "
+                 "attempts to a number greater than one. In case a service check is not OK "
+                 "and the maximum number of check attempts is not yet reached, it will be "
+                 "rescheduled with this interval. The retry interval is usually set to a smaller "
+                 "value than the normal interval.<br><br>This setting only applies to "
+                 "active checks.")),
     itemtype = "service")
 
 register_rule(group,
@@ -1141,27 +1402,30 @@ register_rule(group,
 
 register_rule(group,
     "extra_host_conf:check_interval",
-    Integer(
+    Transform(
+        Age(minvalue=1, default_value=60),
+        forth = lambda v: int(v * 60),
+        back = lambda v: float(v) / 60.0,
         title = _("Normal check interval for host checks"),
         help = _("The default interval is set to one minute. Here you can specify a larger "
                  "interval. The host is contacted in this interval on a regular base. The host "
                  "check is also being executed when a problematic service state is detected to check "
-                 "wether or not the service problem is resulting from a host problem."),
-        minvalue = 1,
-        label = _("minutes")
+                 "wether or not the service problem is resulting from a host problem.")
     )
 )
 
 register_rule(group,
     "extra_host_conf:retry_interval",
-    Integer(title = _("Retry check interval for host checks"),
+    Transform(
+        Age(minvalue=1, default_value=60),
+        forth = lambda v: int(v * 60),
+        back = lambda v: float(v) / 60.0,
+        title = _("Retry check interval for host checks"),
         help = _("This setting is relevant if you have set the maximum number of check "
                  "attempts to a number greater than one. In case a host check is not UP "
                  "and the maximum number of check attempts is not yet reached, it will be "
                  "rescheduled with this interval. The retry interval is usually set to a smaller "
                  "value than the normal interval."),
-        minvalue = 1,
-        label = _("minutes")
     )
 )
 
@@ -1187,7 +1451,8 @@ register_rule(
           ( "tcp" ,    _("TCP Connect"), Integer(label = _("to port:"), minvalue=1, maxvalue=65535, default_value=80 )),
           ( "ok",      _("Always assume host to be up") ),
           ( "agent",   _("Use the status of the Check_MK Agent") ),
-          ( "service", _("Use the status of the service..."), TextUnicode(label = ":", size=32, allow_empty=False )),
+          ( "service", _("Use the status of the service..."), TextUnicode(label = ":", size=45, allow_empty=False )),
+          ( "custom",  _("Use a custom check plugin..."), PluginCommandLine() ),
         ],
         default_value = "ping",
         html_separator = " ",
@@ -1257,8 +1522,57 @@ register_rule(group,
                  "service completely. Per default all notifications are enabled."),
         choices = [ ("1", _("Enable service notifications")),
                     ("0", _("Disable service notifications")) ],
+    ),
+    itemtype = "service"
+)
+
+register_rule(group,
+    "extra_host_conf:notification_options",
+    Transform(
+        ListChoice(
+            choices = [
+               ( "d",  _("Host goes down")),
+               ( "u",  _("Host gets unreachble")),
+               ( "r",  _("Host goes up again")),
+               ( "f",  _("Start or end of flapping state")),
+               ( "s",  _("Start or end of a scheduled downtime")),
+            ],
+            default_value = [ "d", "u", "r", "f", "s" ],
         ),
-        itemtype = "service")
+        title = _("Notified events for hosts"),
+        help = _("This ruleset allows you to restrict notifications of host problems to certain "
+               "states, e.g. only notify on DOWN, but not on UNREACHABLE. Please select the types "
+               "of events that should initiate notifications. Please note that several other "
+               "filters must also be passed in order for notifications to finally being sent out."),
+        forth = lambda x: x != 'n' and x.split(",") or [],
+        back = lambda x: ",".join(x) or "n",
+    ),
+)
+
+register_rule(group,
+    "extra_service_conf:notification_options",
+    Transform(
+        ListChoice(
+            choices = [
+                ("w", _("Service goes into warning state")),
+                ("u", _("Service goes into unknown state")),
+                ("c", _("Service goes into critical state")),
+                ("r", _("Service recovers to OK")),
+                ("f", _("Start or end of flapping state")),
+                ("s", _("Start or end of a scheduled downtime")),
+            ],
+            default_value = [ "w", "u", "c", "r", "f", "s" ],
+        ),
+        title = _("Notified events for services"),
+        help = _("This ruleset allows you to restrict notifications of service problems to certain "
+               "states, e.g. only notify on CRIT, but not on WARN. Please select the types "
+               "of events that should initiate notifications. Please note that several other "
+               "filters must also be passed in order for notifications to finally being sent out."),
+        forth = lambda x: x != 'n' and x.split(",") or [],
+        back = lambda x: ",".join(x) or "n",
+    ),
+    itemtype = "service"
+)
 
 register_rule(group,
     "extra_host_conf:notification_period",
@@ -1407,8 +1721,8 @@ register_rule(group,
 
 register_rule(group,
     "ignored_services",
-    title = _("Ignored services"),
-    help = _("Services that are declared as <u>ignored</u> by this rule set will not be added "
+    title = _("Disabled services"),
+    help = _("Services that are declared as <u>disabled</u> by this rule set will not be added "
              "to a host during inventory (automatic service detection). Services that already "
              "exist will continued to be monitored but be marked as obsolete in the service "
              "list of a host."),
@@ -1417,9 +1731,9 @@ register_rule(group,
 register_rule(group,
     "ignored_checks",
     CheckTypeSelection(
-        title = _("Ignored checks"),
-        help = _("This ruleset is similar to 'Ignored services', but selects checks to be ignored "
-                 "by their <b>type</b>. This allows to disable certain techinal implementations "
+        title = _("Disabled checks"),
+        help = _("This ruleset is similar to 'Disabled services', but selects checks to be disabled "
+                 "by their <b>type</b>. This allows you to disable certain technical implementations "
                  "such as filesystem checks via SNMP on hosts that also have the Check_MK agent "
                  "installed."),
     ))
@@ -1577,7 +1891,9 @@ register_rule(group,
                       title = _("Privacy protocol")),
                  TextAscii(title = _("Privacy pass phrase")),
                    ])],
-        title = _("SNMP communities of monitored hosts")))
+        title = _("SNMP communities of monitored hosts"),
+        help = _("By default Check_MK uses the community \"public\" to contact hosts via SNMP. This rule "
+                 "can be used to customize the the credentials to be used when contacting hosts via SNMP.")))
 
 register_rule(group,
     "snmp_character_encodings",
@@ -1605,6 +1921,14 @@ register_rule(group,
              "bulk walk, please use the rule set snmpv2c_hosts instead."))
 
 register_rule(group,
+    "snmp_without_sys_descr",
+    title = _("Hosts without system description OID"),
+    help = _("Devices which do not publish the system description OID "
+             ".1.3.6.1.2.1.1.1.0 are normally ignored by the SNMP inventory. "
+             "Use this ruleset to select hosts which should nevertheless "
+             "be checked."))
+
+register_rule(group,
     "snmpv2c_hosts",
     title = _("Hosts using SNMP v2c (and no bulk walk)"),
     help = _("There exist a few devices out there that behave very badly when using SNMP bulk walk. "
@@ -1621,7 +1945,8 @@ register_rule(group,
             ( "timeout",
               Integer(
                   title = _("Timeout between retries"),
-                  help = _("The default is 1 sec."),
+                  help = _("A request is sent to the SNMP daemon, than wait up to this "
+                           " number of seconds until retrying."),
                   default_value = 1,
                   minvalue = 1,
                   maxvalue = 60,
@@ -1633,7 +1958,7 @@ register_rule(group,
                   title = _("Number of retries"),
                   help = _("The default is 5."),
                   default_value = 5,
-                  minvalue = 1,
+                  minvalue = 0,
                   maxvalue = 50,
               )
             ),
@@ -1667,7 +1992,7 @@ register_rule(group,
     "check_mk_exit_status",
     Dictionary(
         elements = [
-            ( "connection", 
+            ( "connection",
               MonitoringState(
                 default_value = 2,
                 title = _("State in case of connection problems")),

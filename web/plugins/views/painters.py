@@ -90,6 +90,7 @@ multisite_painter_options["ts_format"] = {
      ("abs", _("Absolute")),
      ("rel", _("Relative")),
      ("both", _("Both")),
+     ("epoch", _("Unix Timestamp (Epoch)")),
   ]
 }
 
@@ -197,10 +198,10 @@ def paint_nagios_link(row):
     # We need to use the Nagios-URL as configured
     # in sites.
     baseurl = config.site(row["site"])["url_prefix"] + "nagios/cgi-bin"
-    url = baseurl + "/extinfo.cgi?host=" + htmllib.urlencode(row["host_name"])
+    url = baseurl + "/extinfo.cgi?host=" + html.urlencode(row["host_name"])
     svc = row.get("service_description")
     if svc:
-        url += "&type=2&service=" + htmllib.urlencode(svc)
+        url += "&type=2&service=" + html.urlencode(svc)
         what = "service"
     else:
         url += "&type=1"
@@ -213,6 +214,9 @@ def paint_age(timestamp, has_been_checked, bold_if_younger_than, mode=None):
 
     if mode == None:
         mode = get_painter_option("ts_format")
+
+    if mode == "epoch":
+        return "", str(int(timestamp))
 
     if mode == "both":
         css, h1 = paint_age(timestamp, has_been_checked, bold_if_younger_than, "abs")
@@ -274,23 +278,29 @@ multisite_painters["sitealias"] = {
 #   |____/ \___|_|    \_/ |_|\___\___||___/
 #
 
-def paint_service_state_short(row ):
+def paint_service_state_short(row):
     if row["service_has_been_checked"] == 1:
-        state = row["service_state"]
-        name = nagios_short_state_names[row["service_state"]]
+        state = str(row["service_state"])
+        name = nagios_short_state_names.get(row["service_state"], "")
     else:
         state = "p"
         name = "PEND"
+    if is_stale(row):
+        state = str(state) + " stale"
     return "state svcstate state%s" % state, name
 
 def paint_host_state_short(row):
 # return None, str(row)
     if row["host_has_been_checked"] == 1:
         state = row["host_state"]
-        name = nagios_short_host_state_names[row["host_state"]]
+        # A state of 3 is sent by livestatus in cases where no normal state
+        # information is avaiable, e.g. for "DOWNTIMESTOPPED (UP)"
+        name = nagios_short_host_state_names.get(row["host_state"], "")
     else:
         state = "p"
         name = "PEND"
+    if is_stale(row):
+        state = str(state) + " stale"
     return "state hstate hstate%s" % state, name
 
 multisite_painters["service_nagios_link"] = {
@@ -317,25 +327,24 @@ multisite_painters["site_icon"] = {
     "sorter"  : 'site',
 }
 
-
 multisite_painters["svc_plugin_output"] = {
     "title"   : _("Output of check plugin"),
     "short"   : _("Status detail"),
     "columns" : ["service_plugin_output"],
-    "paint"   : lambda row: ("", format_plugin_output(row["service_plugin_output"], row)),
+    "paint"   : lambda row: paint_stalified(row, format_plugin_output(row["service_plugin_output"], row)),
     "sorter"  : 'svcoutput',
 }
 multisite_painters["svc_long_plugin_output"] = {
     "title"   : _("Long output of check plugin (multiline)"),
     "short"   : _("Status detail"),
     "columns" : ["service_long_plugin_output"],
-    "paint"   : lambda row: (None, row["service_long_plugin_output"].replace('\\n', '<br>')),
+    "paint"   : lambda row: paint_stalified(row, row["service_long_plugin_output"].replace('\\n', '<br>')),
 }
 multisite_painters["svc_perf_data"] = {
     "title" : _("Service performance data"),
     "short" : _("Perfdata"),
     "columns" : ["service_perf_data"],
-    "paint" : lambda row: (None, row["service_perf_data"])
+    "paint" : lambda row: paint_stalified(row, row["service_perf_data"])
 }
 
 def get_perfdata_nth_value(row, n, remove_unit = False):
@@ -357,7 +366,7 @@ def get_perfdata_nth_value(row, n, remove_unit = False):
         return str(e)
 
 def paint_perfdata_nth_value(row, n):
-    return "", get_perfdata_nth_value(row, n)
+    return paint_stalified(row, get_perfdata_nth_value(row, n))
 
 multisite_painters["svc_perf_val01"] = {
     "title" : _("Service performance data - value number  1"),
@@ -511,6 +520,14 @@ multisite_painters["svc_last_notification"] = {
     "paint"   : lambda row: paint_age(row["service_last_notification"], row["service_last_notification"], 0),
 }
 
+multisite_painters['svc_notification_number'] = {
+    "title"     : _("Service notification number"),
+    "short"     : _("N#"),
+    "columns"   : [ "service_current_notification_number" ],
+    "paint"     : lambda row: ("", row["service_current_notification_number"]),
+}
+
+
 multisite_painters["svc_check_latency"] = {
     "title"   : _("Service check latency"),
     "short"   : _("Latency"),
@@ -561,7 +578,7 @@ multisite_painters["svc_check_type"] = {
 
 def paint_nagiosflag(row, field, bold_if_nonzero):
     value = row[field]
-    yesno = {True:"yes", False:"no"}[value != 0]
+    yesno = {True: _("yes"), False: _("no")}[value != 0]
     if (value != 0) == bold_if_nonzero:
         return "badflag", yesno
     else:
@@ -686,7 +703,7 @@ multisite_painters["check_manpage"] = {
 
 def paint_comments(prefix, row):
     comments = row[ prefix + "comments_with_info"]
-    text = ", ".join(["<i>%s</i>: %s" % (a, htmllib.attrencode(c)) for (id, a, c) in comments ])
+    text = ", ".join(["<i>%s</i>: %s" % (a, html.attrencode(c)) for (id, a, c) in comments ])
     return "", text
 
 multisite_painters["svc_comments"] = {
@@ -757,6 +774,27 @@ multisite_painters["svc_custom_notes"] = {
     "short"   : _("Notes"),
     "columns" : [ "host_name", "host_address", "service_description", "service_plugin_output" ],
     "paint"   : paint_custom_notes,
+}
+
+multisite_painters["svc_staleness"] = {
+    "title"   : _("Service staleness value"),
+    "short"   : _("Staleness"),
+    "columns" : ["service_staleness"],
+    "paint"   : lambda row: ('', '%0.2f' % row.get('service_staleness', 0)),
+}
+
+def paint_is_stale(row):
+    if is_stale(row):
+        return "badflag", _('yes')
+    else:
+        return "goodflag", _('no')
+
+multisite_painters["svc_is_stale"] = {
+    "title"   : _("Service is stale"),
+    "short"   : _("Stale"),
+    "columns" : ["service_staleness"],
+    "paint"   : paint_is_stale,
+    "sorter"  : 'svc_staleness',
 }
 
 #   _   _           _
@@ -910,6 +948,13 @@ multisite_painters["host_notifper"] = {
     "paint"   : lambda row: (None, row["host_notification_period"]),
 }
 
+multisite_painters['host_notification_number'] = {
+    "title"     : _("Host notification number"),
+    "short"     : _("N#"),
+    "columns"   : [ "host_current_notification_number" ],
+    "paint"     : lambda row: ("", saveint(row["host_current_notification_number"])),
+}
+
 multisite_painters["host_flapping"] = {
     "title"   : _("Host is flapping"),
     "short"   : _("Flap"),
@@ -950,7 +995,7 @@ multisite_painters["host_black"] = {
 def paint_host_black_with_link_to_old_nagios_services(row):
     host = row["host_name"]
     baseurl = config.site(row["site"])["url_prefix"] + "nagios/cgi-bin"
-    url = baseurl + "/status.cgi?host=" + htmllib.urlencode(host)
+    url = baseurl + "/status.cgi?host=" + html.urlencode(host)
     state = row["host_state"]
     if state != 0:
         return None, '<div class=hostdown><a href="%s">%s</a></div>' % (url, host)
@@ -1090,9 +1135,9 @@ def paint_service_list(row, columnname):
             host = row["host_name"]
             text = svc
         link = "view.py?view_name=service&site=%s&host=%s&service=%s" % (
-                htmllib.urlencode(row["site"]),
-                htmllib.urlencode(host),
-                htmllib.urlencode(svc))
+                html.urlencode(row["site"]),
+                html.urlencode(host),
+                html.urlencode(svc))
         if checked:
             css = "state%d" % state
         else:
@@ -1159,18 +1204,8 @@ multisite_painters["host_custom_notes"] = {
     "paint"   : paint_custom_notes,
 }
 
-def paint_host_tags(row):
-    return "", get_host_tags(row)
-
-multisite_painters["host_tags"] = {
-    "title"   : _("Host Tags (Check_MK)"),
-    "short"   : _("Tags"),
-    "columns" : [ "host_custom_variable_names", "host_custom_variable_values" ],
-    "paint"   : paint_host_tags,
-}
-
 multisite_painters["host_comments"] = {
-    "title"   : _("Host Comments"),
+    "title"   : _("Host comments"),
     "short"   : _("Comments"),
     "columns" : [ "host_comments_with_info" ],
     "paint"   : lambda row: paint_comments("host_", row),
@@ -1190,6 +1225,20 @@ multisite_painters["host_acknowledged"] = {
     "paint"   : lambda row: paint_nagiosflag(row, "host_acknowledged", False),
 }
 
+multisite_painters["host_staleness"] = {
+    "title"   : _("Host staleness value"),
+    "short"   : _("Staleness"),
+    "columns" : ["host_staleness"],
+    "paint"   : lambda row: ('', '%0.2f' % row.get('host_staleness', 0)),
+}
+
+multisite_painters["host_is_stale"] = {
+    "title"   : _("Host is stale"),
+    "short"   : _("Stale"),
+    "columns" : ["host_staleness"],
+    "paint"   : paint_is_stale,
+    "sorter"  : 'svc_staleness',
+}
 
 #    _   _           _
 #   | | | | ___  ___| |_ __ _ _ __ ___  _   _ _ __  ___
@@ -1202,8 +1251,8 @@ def paint_hg_host_list(row):
     h = "<div class=objectlist>"
     for host, state, checked in row["hostgroup_members_with_state"]:
         link = "view.py?view_name=host&site=%s&host=%s" % (
-                htmllib.urlencode(row["site"]),
-                htmllib.urlencode(host))
+                html.urlencode(row["site"]),
+                html.urlencode(host))
         if checked:
             css = "hstate%d" % state
         else:
@@ -1402,7 +1451,7 @@ multisite_painters["comment_author"] = {
 multisite_painters["comment_comment"] = {
     "title"   : _("Comment text"),
     "columns" : ["comment_comment"],
-    "paint"   : lambda row: (None, htmllib.attrencode(row["comment_comment"])),
+    "paint"   : lambda row: (None, html.attrencode(row["comment_comment"])),
 }
 
 multisite_painters["comment_what"] = {
@@ -1481,19 +1530,19 @@ multisite_painters["downtime_comment"] = {
     "title"   : _("Downtime comment"),
     "short"   : _("Comment"),
     "columns" : ["downtime_comment"],
-    "paint"   : lambda row: (None, htmllib.attrencode(row["downtime_comment"])),
+    "paint"   : lambda row: (None, html.attrencode(row["downtime_comment"])),
 }
 
 multisite_painters["downtime_fixed"] = {
-    "title"   : _("Downtime is fixed"),
-    "short"   : _("Fixed"),
+    "title"   : _("Type of Downtime"),
+    "short"   : _("Type"),
     "columns" : ["downtime_fixed"],
     "paint"   : lambda row: (None, row["downtime_fixed"] == 0 and _("flexible") or _("fixed")),
 }
 
 multisite_painters["downtime_what"] = {
-    "title"   : _("Downtime type (host/service)"),
-    "short"   : _("Type"),
+    "title"   : _("Downtime for host/service"),
+    "short"   : _("for"),
     "columns" : ["is_service"],
     "paint"   : lambda row: (None, row["is_service"] and _("Service") or _("Host")),
 }
@@ -1530,15 +1579,12 @@ multisite_painters["downtime_end_time"] = {
 }
 
 def paint_downtime_duration(row):
-    if row["downtime_fixed"] == 1:
-        return None, ""
-    else:
-        return None, "%02d:%02d" % divmod(row["downtime_duration"] / 60, 60)
+    return "number", "%02d:%02d:00" % divmod(row["downtime_duration"] / 60, 60)
 
 multisite_painters["downtime_duration"] = {
     "title"   : _("Downtime duration (if flexible)"),
     "short"   : _("Duration"),
-    "columns" : ["downtime_duration", "downtime_fixed"],
+    "columns" : ["downtime_duration", ], # "downtime_fixed"],
     "paint"   : paint_downtime_duration,
 }
 
@@ -1553,7 +1599,7 @@ multisite_painters["log_message"] = {
     "title"   : _("Log: complete message"),
     "short"   : _("Message"),
     "columns" : ["log_message"],
-    "paint"   : lambda row: ("", htmllib.attrencode(row["log_message"])),
+    "paint"   : lambda row: ("", html.attrencode(row["log_message"])),
 }
 
 def paint_log_plugin_output(row):
@@ -1648,14 +1694,14 @@ multisite_painters["log_options"] = {
     "title"   : _("Log: informational part of message"),
     "short"   : _("Info"),
     "columns" : ["log_options"],
-    "paint"   : lambda row: ("", htmllib.attrencode(row["log_options"])),
+    "paint"   : lambda row: ("", html.attrencode(row["log_options"])),
 }
 
 def paint_log_comment(msg):
     if ';' in msg:
         parts = msg.split(';')
         if len(parts) > 6:
-          return ("", htmllib.attrencode(parts[-1]))
+          return ("", html.attrencode(parts[-1]))
     return ("", "")
 
 multisite_painters["log_comment"] = {
@@ -1738,3 +1784,71 @@ multisite_painters["alert_stats_problem"] = {
     "columns" : [ "alerts_problem" ],
     "paint" : lambda row: paint_svc_count('s', row["alerts_problem"])
 }
+
+#
+# HOSTTAGS
+#
+
+def paint_host_tags(row):
+    return "", get_host_tags(row)
+
+multisite_painters["host_tags"] = {
+    "title"   : _("Host tags (raw)"),
+    "short"   : _("Tags"),
+    "columns" : [ "host_custom_variable_names", "host_custom_variable_values" ],
+    "paint"   : paint_host_tags,
+    "sorter"  : 'host',
+}
+
+def paint_host_tags_with_titles(row):
+    output = ''
+    misc_tags = []
+    for tag in get_host_tags(row).split():
+        group_title = config.tag_group_title(tag)
+        if group_title:
+            output += group_title + ': ' + (config.tag_alias(tag) or tag) + '<br />\n'
+        else:
+            misc_tags.append(tag)
+
+    if misc_tags:
+        output += _('Misc:') + ' ' + ', '.join(misc_tags)
+
+    return "", output
+
+multisite_painters["host_tags_with_titles"] = {
+    "title"   : _("Host tags (with titles)"),
+    "short"   : _("Tags"),
+    "columns" : [ "host_custom_variable_names", "host_custom_variable_values" ],
+    "paint"   : paint_host_tags_with_titles,
+    "sorter"  : 'host',
+}
+
+g_tags_by_id = {}
+def get_tag_group(tgid):
+    # Build a cache
+    if not g_tags_by_id:
+        for entry in config.wato_host_tags:
+            g_tags_by_id[entry[0]] = (entry[1], entry[2])
+
+    return g_tags_by_id.get(tgid)
+
+def paint_host_tag(row, tgid):
+    tags_of_host = get_host_tags(row).split()
+
+    for t in get_tag_group(tgid)[1]:
+        if t[0] in tags_of_host:
+            return "", t[1]
+    return "", _("N/A")
+
+for entry in config.wato_host_tags:
+    tgid = entry[0]
+    tit  = entry[1]
+    ch   = entry[2]
+
+    multisite_painters["host_tag_" + tgid] = {
+        "title"   : _("Host tag:") + ' ' + tit,
+        "short"   : tit,
+        "columns" : [ "host_custom_variable_names", "host_custom_variable_values" ],
+        "paint"   : paint_host_tag,
+        "args"    : [ tgid ],
+    }

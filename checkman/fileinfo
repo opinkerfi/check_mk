@@ -1,6 +1,6 @@
-title: Check age and size of files
-agents: windows, linux
-author: Mathias Kettner <mk@mathias-kettner.de>
+title: Age and size of files
+agents: windows, linux, freebsd, macosx, solaris
+catalog: os/files
 license: GPL
 distribution: check_mk
 description:

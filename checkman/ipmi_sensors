@@ -1,6 +1,6 @@
-title: Check IPMI sensors via freeipmi
+title: IPMI sensors via freeipmi
 agents: linux
-author: Mathias Kettner <mk@mathias-kettner.de>
+catalog: os/hardware
 license: GPL
 distribution: check_mk
 description:

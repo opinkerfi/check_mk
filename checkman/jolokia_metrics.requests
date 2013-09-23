@@ -1,6 +1,6 @@
-title: Requests to JVM instances
+title: BEA Weblogic: Requests to JVM instances
 agents: linux
-author: Mathias Kettner <mk@mathias-kettner.de>
+catalog: app/java
 license: GPL
 distribution: check_mk
 description:

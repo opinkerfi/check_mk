@@ -1,6 +1,6 @@
-title: Monitor summary status of Fujitsu ETERNUS DX storage systems
-agents: SNMP
-author: Lars Michelsen <lm@mathias-kettner.de>
+title: Fujitsu ETERNUS DX storage systems: Summary status
+agents: snmp
+catalog: hw/storagehw/fujitsu
 license: GPL
 distribution: check_mk
 description:

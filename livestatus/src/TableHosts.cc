@@ -44,6 +44,7 @@
 #include "HostgroupsColumn.h"
 #include "ContactgroupsColumn.h"
 #include "HostSpecialIntColumn.h"
+#include "HostSpecialDoubleColumn.h"
 #include "tables.h"
 #include "auth.h"
 
@@ -164,6 +165,7 @@ void TableHosts::addColumns(Table *table, string prefix, int indirect_offset)
                 "Whether a flex downtime is pending (0/1)", (char *)(&hst.pending_flex_downtime) - ref, indirect_offset));
     table->addColumn(new OffsetIntColumn(prefix + "total_services",
                 "The total number of services of the host", (char *)(&hst.total_services) - ref, indirect_offset));
+    // Note: this is redundant with "active_checks_enabled". Nobody noted this before...
     table->addColumn(new OffsetIntColumn(prefix + "checks_enabled",
                 "Whether checks of the host are enabled (0/1)", (char *)(&hst.checks_enabled) - ref, indirect_offset));
     table->addColumn(new OffsetIntColumn(prefix + "notifications_enabled",
@@ -299,6 +301,9 @@ void TableHosts::addColumns(Table *table, string prefix, int indirect_offset)
                 "The effective hard state of the host (eliminates a problem in hard_state)", HSIC_REAL_HARD_STATE, indirect_offset));
     table->addColumn(new HostSpecialIntColumn(prefix + "pnpgraph_present",
                 "Whether there is a PNP4Nagios graph present for this host (0/1)", HSIC_PNP_GRAPH_PRESENT, indirect_offset));
+
+    table->addColumn(new HostSpecialDoubleColumn(prefix + "staleness",
+                    "Staleness indicator for this host", HSDC_STALENESS, indirect_offset));
 
     table->addColumn(new HostgroupsColumn(prefix + "groups",
                 "A list of all host groups this host is in", (char *)(&hst.hostgroups_ptr) - ref, indirect_offset));

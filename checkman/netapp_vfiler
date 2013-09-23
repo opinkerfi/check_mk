@@ -1,6 +1,6 @@
-title: Check vFiler status on NetAPP Ontap filers
+title: NetApp Ontap Filers: vFiler Status
 agents: snmp
-author: Florian Heigl <fh@mathias-kettner.de>
+catalog: hw/storagehw/netapp
 license: GPL
 distribution: check_mk
 description:

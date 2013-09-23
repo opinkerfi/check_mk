@@ -24,15 +24,35 @@
 # to the Free Software Foundation, Inc., 51 Franklin St,  Fifth Floor,
 # Boston, MA 02110-1301 USA.
 
-wato_enabled           = True
-wato_host_tags         = []
-wato_aux_tags          = []
-wato_hide_filenames    = True
-wato_hide_hosttags     = False
-wato_hide_varnames     = True
-wato_max_snapshots     = 50
-wato_num_hostspecs     = 12
-wato_num_itemspecs     = 15
-wato_activation_method = 'restart'
-wato_write_nagvis_auth = False
-wato_hidden_users      = []
+wato_enabled            = True
+wato_host_tags          = []
+wato_aux_tags           = []
+wato_hide_filenames     = True
+wato_hide_hosttags      = False
+wato_hide_varnames      = True
+wato_hide_help_in_lists = True
+wato_max_snapshots      = 50
+wato_num_hostspecs      = 12
+wato_num_itemspecs      = 15
+wato_activation_method  = 'restart'
+wato_write_nagvis_auth  = False
+wato_use_git            = False
+wato_hidden_users       = []
+wato_user_attrs         = []
+
+def tag_alias(tag):
+    for entry in wato_host_tags:
+        id, title, tags = entry[:3]
+        for t in tags:
+            if t[0] == tag:
+                return t[1]
+    for id, alias in wato_aux_tags:
+        if id == tag:
+            return alias
+
+def tag_group_title(tag):
+    for entry in wato_host_tags:
+        id, title, tags = entry[:3]
+        for t in tags:
+            if t[0] == tag:
+                return title

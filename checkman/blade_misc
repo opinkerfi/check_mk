@@ -1,6 +1,6 @@
-title: Check hardware sensors of IBM blade center
+title: IBM Blade Center: Hardware Sensors
 agents: snmp
-author: Mathias Kettner <mk@mathias-kettner.de>
+catalog: hw/server/ibm
 license: GPL
 distribution: check_mk
 description:

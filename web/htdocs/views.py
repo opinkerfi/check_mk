@@ -24,13 +24,15 @@
 # to the Free Software Foundation, Inc., 51 Franklin St,  Fifth Floor,
 # Boston, MA 02110-1301 USA.
 
-import config, defaults, livestatus, htmllib, time, os, re, pprint, time, copy
+import config, defaults, livestatus, time, os, re, pprint, time, copy
 import weblib, traceback, forms, valuespec
 from lib import *
 from pagefunctions import *
 
 max_display_columns   = 12
 max_sort_columns      = 5
+
+view_inherit_attrs = [ 'title', 'linktitle', 'topic', 'description' ]
 
 # Python 2.3 does not have 'set' in normal namespace.
 # But it can be imported from 'sets'
@@ -280,12 +282,12 @@ def available_views():
     # 2. views of special users allowed to globally override builtin views
     for (u, n), view in html.multisite_views.items():
         if n not in views and view["public"] and config.user_may(u, "general.force_views"):
-            # Honor original permissions for the current user
-            permname = "view.%s" % n
-            if config.permission_exists(permname) \
-                and not config.may(permname):
-                continue
-            views[n] = view
+                # Honor original permissions for the current user
+                permname = "view.%s" % n
+                if config.permission_exists(permname) \
+                    and not config.may(permname):
+                    continue
+                views[n] = view
 
     # 3. Builtin views, if allowed.
     for (u, n), view in html.multisite_views.items():
@@ -305,14 +307,30 @@ def available_views():
                     continue
                 views[n] = view
 
-    return views
+    # Maybe resolve inherited attributes
+    for name, view in views.items():
+        builtin_view = html.multisite_views.get(('', name))
+        if builtin_view:
+            for attr in view_inherit_attrs:
+                if attr not in view and attr in builtin_view:
+                    view[attr] = builtin_view[attr]
 
+    return views
 
 def save_views(us):
     userviews = {}
     for (user, name), view in html.multisite_views.items():
         if us == user:
-            userviews[name] = view
+            builtin_view = html.multisite_views.get(('', name))
+            # need a copy here as we might remove the inherited attributes which
+            # are added during load_views() but should not be persisted.
+            if builtin_view:
+                userviews[name] = copy.deepcopy(view)
+                for attr in view_inherit_attrs:
+                    if attr in view and builtin_view.get(attr) == view[attr]:
+                        del userviews[name][attr]
+            else:
+                userviews[name] = view
     config.save_user_file("views", userviews)
 
 
@@ -340,23 +358,36 @@ def page_edit_views(msg=None):
     load_views()
 
     # Deletion of views
-    delname = html.var("_delete")
-    if delname and html.confirm(_("Please confirm the deletion of the view <tt>%s</tt>.") % delname):
-        del html.multisite_views[(config.user_id, delname)]
-        save_views(config.user_id)
-        html.reload_sidebar();
+    delname  = html.var("_delete")
+    if delname:
+        deltitle = html.multisite_views[(config.user_id, delname)]['title']
+        if html.confirm(_("Please confirm the deletion of the view \"%s\".") % deltitle):
+            del html.multisite_views[(config.user_id, delname)]
+            save_views(config.user_id)
+            html.reload_sidebar()
 
-    html.begin_form("create_view", "edit_view.py")
+    if html.var('mode') == 'create':
+        datasource = html.var('datasource')
+        if not datasource:
+            html.show_error(_('Please select a datasource. The datasource specifies which kind of objects '
+                              'can be rendered within the view.'))
+        else:
+            html.immediate_browser_redirect(1, "edit_view.py?mode=create&datasource=%s" % datasource)
+            return
 
+    html.begin_form("create_view")
+    html.hidden_field('mode', 'create')
     html.button("create", _("Create New View"))
     html.write(_(" for datasource: "))
-    html.sorted_select("datasource", [ (k, v["title"]) for k, v in multisite_datasources.items() ])
+    html.sorted_select("datasource", [('', _('--- Select a Datasource ---'))]
+              + [ (k, v["title"]) for k, v in multisite_datasources.items() ])
+    html.end_form()
 
     html.write('<h3>' + _("Existing Views") + '</h3>')
     html.write('<table class=data>')
     html.write("<tr>")
     html.write("<th>%s</th>" % _("Actions"))
-    html.write("<th>%s</th>" % _("Link Name"))
+    html.write("<th>%s</th>" % _("View Name"))
     html.write("<th>%s</th>" % _("Title"))
     html.write("<th>%s</th>" % _("Datasource"))
     html.write("<th>%s</th>" % _("Owner"))
@@ -389,7 +420,7 @@ def page_edit_views(msg=None):
             # Clone / Customize
             buttontext = not owner and _("Customize this view") \
                          or _("Create a clone of this view")
-            backurl = htmllib.urlencode(html.makeuri([]))
+            backurl = html.urlencode(html.makeuri([]))
             clone_url = "edit_view.py?clonefrom=%s&load_view=%s&back=%s" \
                         % (owner, viewname, backurl)
             html.icon_button(clone_url, buttontext, "clone")
@@ -400,21 +431,21 @@ def page_edit_views(msg=None):
                                  % viewname, _("Delete this view!"), "delete")
             html.write('</td>')
 
-            # Link name
+            # View Name
             html.write('<td>%s</td>' % viewname)
 
             # Title
             html.write('<td>')
+            title = view['title']
             if not view["hidden"]:
-                html.write("<a href=\"view.py?view_name=%s\">%s</a>"
-                           % (viewname, view["title"]))
+                html.write("<a href=\"view.py?view_name=%s\">%s</a>" % (viewname, title))
             else:
-                html.write(view["title"])
-            html.help(view.get("description"))
+                html.write(title)
+            html.help(view['description'])
             html.write("</td>")
 
             # Datasource
-            html.write("<td class=content>%s</td>\n" % view["datasource"])
+            html.write("<td class=content>%s</td>\n" % multisite_datasources[view["datasource"]]['title'])
 
             # Owner
             if owner == "":
@@ -427,7 +458,6 @@ def page_edit_views(msg=None):
             html.write("</tr>\n")
 
     html.write("</table>\n")
-    html.end_form()
     html.footer()
 
 
@@ -450,20 +480,23 @@ def select_view(varname, only_with_hidden = False):
 #  |_____\__,_|_|\__|    \_/  |_|\___| \_/\_/
 #  Edit one view
 # -------------------------------------------------------------------------
+
 def page_edit_view():
     if not config.may("general.edit_views"):
         raise MKAuthException(_("You are not allowed to edit views."))
 
     load_views()
-    view = None
+    view = {}
 
     # Load existing view from disk - and create a copy if 'clonefrom' is set
     viewname = html.var("load_view")
     oldname = viewname
+    mode = html.var('mode', 'edit')
     if viewname:
         cloneuser = html.var("clonefrom")
-        if cloneuser != None:
-            view = copy.copy(html.multisite_views.get((cloneuser, viewname), None))
+        if cloneuser:
+            mode  = 'clone'
+            view = copy.deepcopy(html.multisite_views.get((cloneuser, viewname), None))
             # Make sure, name is unique
             if cloneuser == config.user_id: # Clone own view
                 newname = viewname + "_clone"
@@ -490,15 +523,34 @@ def page_edit_view():
 
     # set datasource name if a new view is being created
     elif html.var("datasource"):
+        if not html.var('view_name'):
+            mode = 'create'
         datasourcename = html.var("datasource")
     else:
-        raise MKInternalError(_("No view name and not datasource defined."))
+        raise MKInternalError(_("No view name and no datasource defined."))
 
+    if mode == 'clone':
+        title = _('Clone View')
+    elif mode == 'create':
+        title = _('Create View')
+    else:
+        title = _('Edit View')
+
+    vs = {
+        'title'       : TextUnicode(size = 50, allow_empty = False),
+        'linktitle'   : TextUnicode(size = 26),
+        'topic'       : TextUnicode(size = 50),
+        'description' : TextAreaUnicode(rows = 4, cols = 50),
+    }
+
+    if mode != 'create':
+        for key, valuespec in vs.items():
+            vs[key] = OptionalEdit(valuespec)
 
     # handle case of save or try or press on search button
     if html.var("save") or html.var("try") or html.var("search"):
         try:
-            view = create_view()
+            view = create_view(vs)
             if html.var("save"):
                 if html.check_transaction():
                     load_views()
@@ -521,7 +573,7 @@ def page_edit_view():
             html.write("<div class=error>%s</div>\n" % e.message)
             html.add_user_error(e.varname, e.message)
 
-    html.header(_("Edit view"), stylesheets=["pages", "views", "status", "bi"])
+    html.header(title, stylesheets=["pages", "views", "status", "bi"])
     html.begin_context_buttons()
     back_url = html.var("back", "")
     if back_url:
@@ -531,41 +583,48 @@ def page_edit_view():
 
     html.begin_form("view")
     html.hidden_field("back", back_url)
-    html.hidden_field("old_name", viewname) # safe old name in case user changes it
+    html.hidden_field("mode", mode)
+    html.hidden_field("clonefrom", html.var("clonefrom", "")) # safe old name in case user changes it
+    html.hidden_field("old_name", oldname) # safe old name in case user changes it
 
     forms.header(_("Basic Settings"))
 
-    forms.section(_("Title"))
-    html.text_input("view_title", size=50)
-
-    forms.section(_("Link Name"))
+    forms.section(_("View Name"))
     html.text_input("view_name", size=12)
-    html.help(_("The link name will be used in URLs that point to a view, e.g. "
+    html.help(_("The view name will be used in URLs that point to a view, e.g. "
                 "<tt>view.py?view_name=<b>myview</b></tt>. It will also be used "
                 "internally for identifying a view. You can create several views "
-                "with the same title but only one per link name. If you create a "
-                "view that has the same link name as a builtin view, then your "
+                "with the same title but only one per view name. If you create a "
+                "view that has the same view name as a builtin view, then your "
                 "view will override that (shadowing it)."))
 
     forms.section(_("Datasource"), simple=True)
     datasource_title = multisite_datasources[datasourcename]["title"]
-    html.write("%s: <b>%s</b><br>\n" % (_('Datasource'), datasource_title))
+    html.write("%s: <b>%s</b><br />\n" % (_('Datasource'), datasource_title))
     html.hidden_field("datasource", datasourcename)
     html.help(_("The datasource of a view cannot be changed."))
 
+    forms.space()
+
+    forms.section(_("Title"))
+    vs['title'].render_input('view_title', view.get('title'))
+
     forms.section(_("Topic"))
-    html.text_input("view_topic", _("Other"), size=50)
+    vs['topic'].render_input('view_topic', view.get('topic'))
     html.help(_("The view will be sorted under this topic in the Views snapin. "))
 
-    forms.section(_("Buttontext"))
-    html.text_input("view_linktitle", size=26)
-    html.write(_("&nbsp; Icon: "))
-    html.text_input("view_icon", size=14)
+    forms.section(_("Description"))
+    vs['description'].render_input('view_description', view.get('description'))
+
+    forms.section(_("Button Text"))
+    vs['linktitle'].render_input('view_linktitle', view.get('linktitle'))
     html.help(_("If you define a text here, then it will be used in "
                 "buttons to the view instead of of view title."))
 
-    forms.section(_("Description"))
-    html.text_area("view_description", "", rows=4, cols=50)
+    forms.section(_("Button Icon"))
+    html.text_input("view_icon", size=14)
+
+    forms.space()
 
     forms.section(_("Visibility"))
     if config.may("general.publish_views"):
@@ -578,7 +637,7 @@ def page_edit_view():
     html.checkbox("mustsearch", label=_('show data only on search') + "<br>")
     html.checkbox("hidebutton", label=_('do not show a context button to this view'))
 
-    forms.section(_("Browser reload"))
+    forms.section(_("Automatic page reload"))
     html.write(_("Reload page every "))
     html.number_input("browser_reload", 0)
     html.write(_(" seconds"))
@@ -639,7 +698,7 @@ def page_edit_view():
                 ("show", _("Show to user")),
                 ("hide", _("Use for linking")),
                 ("hard", _("Hardcode"))],
-                "", "filter_activation(this)")
+                "off", "filter_activation(this)")
         show_filter(filt)
         html.write('</div>')
         html.write('<div class=clear></div>')
@@ -761,21 +820,21 @@ def view_edit_column(n, var_prefix, maxnum, allowed, joined = []):
     html.write('</td>')
 
     # Actual column editor
-    html.write('<td id="%slabel_%d" class=celeft>%s %d:</td><td>' % (var_prefix, n, _('Column'), n))
+    html.write('<td id="%slabel_%d" class=celeft>%s:</td><td>' % (var_prefix, n, _('Column')))
     html.select("%s%d" % (var_prefix, n), collist, "", "toggle_join_fields('%s', %d, this)" % (var_prefix, n))
     display = 'none'
     if joined and is_joined_value(collist, "%s%d" % (var_prefix, n)):
         display = ''
     html.write("</td></tr><tr id='%sjoin_index_row%d' style='display:%s'><td class=celeft>%s:</td><td>" %
                                                                     (var_prefix, n, display, _('of Service')))
-    html.text_input("%sjoin_index_%d" % (var_prefix, n))
+    html.text_input("%sjoin_index_%d" % (var_prefix, n), id = var_prefix + "join_index_%d" % n)
     html.write("</td></tr><tr><td class=celeft>%s:</td><td>" % _('Link'))
     select_view("%slink_%d" % (var_prefix, n))
     html.write("</td></tr><tr><td class=celeft>%s:</td><td>" % _('Tooltip'))
     html.select("%stooltip_%d" % (var_prefix, n), collist)
     html.write("</td></tr><tr id='%stitle_row%d' style='display:%s'><td class=celeft>%s:</td><td>" %
                                                                        (var_prefix, n, display, _('Title')))
-    html.text_input("%stitle_%d" % (var_prefix, n))
+    html.text_input("%stitle_%d" % (var_prefix, n), id = var_prefix + "title_%d" % n)
     html.write("</td></tr></table>")
     html.write("</div>")
 
@@ -884,25 +943,48 @@ def load_view_into_html_vars(view):
 
 # Extract properties of view from HTML variables and construct
 # view object, to be used for saving or displaying
-def create_view():
+def create_view(vs):
     name = html.var("view_name").strip()
     if name == "":
         raise MKUserError("view_name", _("Please supply a unique name for the view, this will be used to specify that view in HTTP links."))
     if not re.match("^[a-zA-Z0-9_]+$", name):
         raise MKUserError("view_name", _("The name of the view may only contain letters, digits and underscores."))
-    title = html.var_utf8("view_title").strip()
-    if title == "":
-        raise MKUserError("view_title", _("Please specify a title for your view."))
-    linktitle = html.var("view_linktitle").strip()
-    if not linktitle:
-        linktitle = title
+
+    mode = html.var("mode")
+    oldname = html.var("old_name")
+    override = False
+    if mode in 'clone':
+        if oldname == name:
+            override = True # means overriding another view with same name
+
+        cloneuser = html.var("clonefrom")
+        if cloneuser:
+            base_view = html.multisite_views.get((cloneuser, oldname), None)
+        else:
+            base_view = html.multisite_views.get((config.user_id, oldname))
+            if not base_view:
+                base_view = html.multisite_views.get(('', oldname)) # load builtin view
+    elif mode == 'edit' and ('', oldname) in html.multisite_views:
+        base_view = html.multisite_views.get(('', oldname)) # load builtin view
+        override = True
+
+    view = {}
+    for key, valuespec in vs.items():
+        val = valuespec.from_html_vars('view_' + key)
+        valuespec.validate_value(val, 'view_' + key)
+        if not override or val != base_view.get(key):
+            view[key] = val
+
+    if not override:
+        if not view['linktitle']:
+            view['linktitle'] = view['title']
+        if not view['topic']:
+            view['topic'] = _("Other")
+
     icon = html.var("view_icon")
     if not icon:
         icon = None
 
-    topic = html.var_utf8("view_topic")
-    if not topic:
-        topic = _("Other")
     datasourcename = html.var("datasource")
     datasource = multisite_datasources[datasourcename]
     tablename = datasource["table"]
@@ -999,14 +1081,10 @@ def create_view():
     if len(painternames) == 0:
         raise MKUserError("col_1", _("Please add at least one column to your view."))
 
-    return {
+    view.update({
         "name"            : name,
         "owner"           : config.user_id,
-        "title"           : title,
-        "topic"           : topic,
-        "linktitle"       : linktitle,
         "icon"            : icon,
-        "description"     : html.var_utf8("view_description", ""),
         "datasource"      : datasourcename,
         "public"          : public,
         "hidden"          : hidden,
@@ -1026,7 +1104,8 @@ def create_view():
         "sorters"         : sorternames,
         "group_painters"  : group_painternames,
         "painters"        : painternames,
-    }
+    })
+    return view
 
 
 # ---------------------------------------------------------------------
@@ -1472,6 +1551,13 @@ def render_view(view, rows, datasource, group_painters, painters,
         if bi.reused_compilation():
             html.add_status_icon("aggrcomp", _("Reused cached compiled BI aggregations (PID %d)") % pid)
 
+        if config.may('wato.users'):
+            try:
+                msg = file(defaults.var_dir + '/web/ldap_sync_fail.mk').read()
+                html.add_status_icon("ldap", _('Last LDAP sync failed! %s') % html.attrencode(msg))
+            except IOError:
+                pass
+
         html.bottom_focuscode()
         if 'Z' in display_options:
             html.bottom_footer()
@@ -1733,7 +1819,7 @@ def show_context_links(thisview, active_filters, show_filters, display_options,
 
     # Customize/Edit view button
     if 'E' in display_options and config.may("general.edit_views"):
-        backurl = htmllib.urlencode(html.makeuri([]))
+        backurl = html.urlencode(html.makeuri([]))
         if thisview["owner"] == config.user_id:
             url = "edit_view.py?load_view=%s&back=%s" % (thisview["name"], backurl)
         else:
@@ -1863,7 +1949,7 @@ def do_query_data(query, columns, add_columns, merge_column,
         html.live.set_limit(limit + 1) # + 1: We need to know, if limit is exceeded
     if config.debug_livestatus_queries \
             and html.output_format == "html" and 'W' in html.display_options:
-        html.write('<div class="livestatus message" onmouseover="this.style.display=\'none\';">'
+        html.write('<div class="livestatus message">'
                    '<tt>%s</tt></div>\n' % (query.replace('\n', '<br>\n')))
 
     if only_sites:
@@ -1941,7 +2027,7 @@ def sort_data(data, sorters):
         return
 
     # Handle case where join columns are not present for all rows
-    def save_compare(compfunc, row1, row2):
+    def save_compare(compfunc, row1, row2, args):
         if row1 == None and row2 == None:
             return 0
         elif row1 == None:
@@ -1949,7 +2035,10 @@ def sort_data(data, sorters):
         elif row2 == None:
             return 1
         else:
-            return compfunc(row1, row2)
+            if args:
+                return compfunc(row1, row2, *args)
+            else:
+                return compfunc(row1, row2)
 
     sort_cmps = []
     for s in sorters:
@@ -1959,14 +2048,17 @@ def sort_data(data, sorters):
             joinkey = s[2] # e.g. service description
         else:
             joinkey = None
-        sort_cmps.append((cmpfunc, negate, joinkey))
+        sort_cmps.append((cmpfunc, negate, joinkey, s[0].get('args')))
 
     def multisort(e1, e2):
-        for func, neg, joinkey in sort_cmps:
+        for func, neg, joinkey, args in sort_cmps:
             if joinkey: # Sorter for join column, use JOIN info
-                c = neg * save_compare(func, e1["JOIN"].get(joinkey), e2["JOIN"].get(joinkey))
+                c = neg * save_compare(func, e1["JOIN"].get(joinkey), e2["JOIN"].get(joinkey), args)
             else:
-                c = neg * func(e1, e2)
+                if args:
+                    c = neg * func(e1, e2, *args)
+                else:
+                    c = neg * func(e1, e2)
             if c != 0: return c
         return 0 # equal
 
@@ -2009,7 +2101,7 @@ def allowed_for_joined_datasource(collection, datasourcename):
 
 def is_joined_value(collection, varname):
     selected_label = [ label for name, label in collection if name == html.var(varname, '') ]
-    return selected_label and selected_label[0][:8] == _('SERVICE:')
+    return selected_label and selected_label[0].startswith(_('SERVICE:'))
 
 def collist_of_collection(collection, join_target = []):
     def sort_list(l):
@@ -2266,6 +2358,12 @@ def execute_hooks(hook):
             else:
                 pass
 
+def paint_painter(painter, row):
+    if "args" in painter:
+        return painter["paint"](row, *painter["args"])
+    else:
+        return painter["paint"](row)
+
 def prepare_paint(p, row):
     painter = p[0]
     linkview = p[1]
@@ -2276,9 +2374,9 @@ def prepare_paint(p, row):
         if not row:
             return "", ""  # no join information available for that column
 
-    tdclass, content = painter["paint"](row)
+    tdclass, content = paint_painter(painter, row)
 
-    content = htmllib.utf8_to_entities(content)
+    content = html.utf8_to_entities(content)
 
     # Create contextlink to other view
     if content and linkview:
@@ -2287,7 +2385,7 @@ def prepare_paint(p, row):
     # Tooltip
     if content != '' and tooltip:
         cla, txt = multisite_painters[tooltip]["paint"](row)
-        tooltiptext = htmllib.strip_tags(txt)
+        tooltiptext = html.strip_tags(txt)
         content = '<span title="%s">%s</span>' % (tooltiptext, content)
     return tdclass, content
 
@@ -2306,7 +2404,7 @@ def link_to_view(content, row, linkview):
             vars.append(("display_options", do))
 
         filename = html.mobile and "mobile_view.py" or "view.py"
-        uri = filename + "?" + htmllib.urlencode_vars([("view_name", linkview)] + vars)
+        uri = filename + "?" + html.urlencode_vars([("view_name", linkview)] + vars)
         content = "<a href=\"%s\">%s</a>" % (uri, content)
 #        rel = 'view.py?view_name=hoststatus&site=local&host=erdb-lit&display_options=htbfcoezrsix'
 #        content = '<a class=tips rel="%s" href="%s">%s</a>' % (rel, uri, content)
@@ -2327,11 +2425,19 @@ def row_id(view, row):
 
 def paint(p, row, tdattrs=""):
     tdclass, content = prepare_paint(p, row)
+
     if tdclass:
         html.write("<td %s class=\"%s\">%s</td>\n" % (tdattrs, tdclass, content))
     else:
         html.write("<td %s>%s</td>" % (tdattrs, content))
     return content != ""
+
+def paint_stalified(row, text):
+    if is_stale(row):
+        return "stale", text
+    else:
+        return "", text
+
 
 def substract_sorters(base, remove):
     for s in remove:
@@ -2487,10 +2593,10 @@ def register_events(row):
     if config.sounds != []:
         host_state = row.get("host_hard_state", row.get("host_state"))
         if host_state != None:
-            html.register_event({0:"up", 1:"down", 2:"unreachable"}[host_state])
+            html.register_event({0:"up", 1:"down", 2:"unreachable"}[saveint(host_state)])
         svc_state = row.get("service_last_hard_state", row.get("service_state"))
         if svc_state != None:
-            html.register_event({0:"up", 1:"warning", 2:"critical", 3:"unknown"}[svc_state])
+            html.register_event({0:"up", 1:"warning", 2:"critical", 3:"unknown"}[saveint(svc_state)])
 
 # The Group-value of a row is used for deciding wether
 # two rows are in the same group or not
@@ -2518,6 +2624,9 @@ def get_host_tags(row):
             return  val
     return ""
 
+def is_stale(row):
+    return row.get('service_staleness', row.get('host_staleness', 0)) >= config.staleness_threshold
+
 def cmp_insensitive_string(v1, v2):
     c = cmp(v1.lower(), v2.lower())
     # force a strict order in case of equal spelling but different
@@ -2528,6 +2637,16 @@ def cmp_insensitive_string(v1, v2):
         return c
 
 # Sorting
+def cmp_ip_address(column, r1, r2):
+    def split_ip(ip):
+        try:
+            return tuple(int(part) for part in ip.split('.'))
+        except:
+            return ip
+    v1, v2 = split_ip(r1.get(column, '')), split_ip(r2.get(column, ''))
+    return cmp(v1, v2)
+
+
 def cmp_simple_string(column, r1, r2):
     v1, v2 = r1.get(column, ''), r2.get(column, '')
     return cmp_insensitive_string(v1, v2)

@@ -1,6 +1,6 @@
-title: Check the System Event Log from SMBIOS/DMI
+title: System Event Log from SMBIOS/DMI
 agents: linux
-author: Lars Michelsen <lm@mathias-kettner.de>
+catalog: os/hardware
 license: GPL
 distribution: check_mk
 description:

@@ -24,9 +24,6 @@
 # to the Free Software Foundation, Inc., 51 Franklin St,  Fifth Floor,
 # Boston, MA 02110-1301 USA.
 
-# This file is also read in by check_mk's web pages. In that case,
-# the variable check_mk_web is set to True
-
 import os, sys, socket, time, getopt, glob, re, stat, py_compile, urllib, inspect
 
 # These variable will be substituted at 'make dist' time
@@ -59,6 +56,7 @@ if omd_root:
     local_notifications_dir  = local_share + "/notifications"
     local_check_manpages_dir = local_share + "/checkman"
     local_agents_dir         = local_share + "/agents"
+    local_mibs_dir           = local_share + "/mibs"
     local_web_dir            = local_share + "/web"
     local_pnp_templates_dir  = local_share + "/pnp-templates"
     local_doc_dir            = omd_root + "/local/share/doc/check_mk"
@@ -68,12 +66,11 @@ else:
     local_notifications_dir  = None
     local_check_manpages_dir = None
     local_agents_dir         = None
+    local_mibs_dir           = None
     local_web_dir            = None
     local_pnp_templates_dir  = None
     local_doc_dir            = None
     local_locale_dir         = None
-
-
 
 #   +----------------------------------------------------------------------+
 #   |        ____       _   _                                              |
@@ -125,7 +122,7 @@ def verbose(t):
 # read in this file first. It tells us where to look for our
 # configuration file. In python argv[0] always contains the directory,
 # even if the binary lies in the PATH and is called without
-# '/'. This allows us to find our directory by taking everying up to
+# '/'. This allows us to find our directory by taking everything up to
 # the first '/'
 
 # Allow to specify defaults file on command line (needed for OMD)
@@ -209,10 +206,12 @@ ALL_SERVICES   = [ "" ]          # optical replacement"
 NEGATE         = '@negate'       # negation in boolean lists
 
 # Basic Settings
+monitoring_core                    = "nagios" # other option: "cmc"
 agent_port                         = 6556
 agent_ports                        = []
 snmp_ports                         = [] # UDP ports used for SNMP
 tcp_connect_timeout                = 5.0
+use_dns_cache                      = True # prevent DNS by using own cache file
 delay_precompile                   = False  # delay Python compilation to Nagios execution
 restart_locking                    = "abort" # also possible: "wait", None
 check_submission                   = "file" # alternative: "pipe"
@@ -220,27 +219,30 @@ aggr_summary_hostname              = "%s-s"
 agent_min_version                  = 0 # warn, if plugin has not at least version
 check_max_cachefile_age            = 0 # per default do not use cache files when checking
 cluster_max_cachefile_age          = 90   # secs.
-piggyback_max_cachefile_age        = 900  # secs
+piggyback_max_cachefile_age        = 3600  # secs
 piggyback_translation              = [] # Ruleset for translating piggyback host names
 simulation_mode                    = False
 agent_simulator                    = False
 perfdata_format                    = "pnp" # also possible: "standard"
-check_mk_perfdata_with_times       = False
+check_mk_perfdata_with_times       = True
 debug_log                          = None
 monitoring_host                    = None # deprecated
 max_num_processes                  = 50
 
 # SNMP communities and encoding
+has_inline_snmp                    = False # is set to True by inline_snmp module, when available
+use_inline_snmp                    = False
 snmp_default_community             = 'public'
 snmp_communities                   = []
 snmp_timing                        = []
 snmp_character_encodings           = []
+explicit_snmp_communities          = {} # override the rule based configuration
 
 # Inventory and inventory checks
 inventory_check_interval           = None # Nagios intervals (4h = 240)
 inventory_check_severity           = 1    # warning
 inventory_max_cachefile_age        = 120  # secs.
-always_cleanup_autochecks          = False
+always_cleanup_autochecks          = True
 
 # Nagios templates and other settings concerning generation
 # of Nagios configuration files. No need to change these values.
@@ -275,6 +277,7 @@ snmp_hosts                           = [ (['snmp'], ALL_HOSTS) ]
 tcp_hosts                            = [ (['tcp'], ALL_HOSTS), (NEGATE, ['snmp'], ALL_HOSTS), (['!ping'], ALL_HOSTS) ]
 bulkwalk_hosts                       = []
 snmpv2c_hosts                        = []
+snmp_without_sys_descr               = []
 usewalk_hosts                        = []
 dyndns_hosts                         = [] # use host name as ip address for these hosts
 ignored_checktypes                   = [] # exclude from inventory
@@ -329,6 +332,8 @@ snmp_check_interval                  = []
 
 # global variables used to cache temporary values (not needed in check_mk_base)
 ip_to_hostname_cache = None
+# in memory cache, contains permanently cached ipaddresses from ipaddresses.cache during runtime
+g_ip_lookup_cache = None
 
 # The following data structures will be filled by the various checks
 # found in the checks/ directory.
@@ -346,12 +351,13 @@ special_agent_info                 = {}
 
 
 # Now include the other modules. They contain everything that is needed
-# at check time (and many of that is also needed at administration time).
+# at check time (and many of what is also needed at administration time).
 try:
-    modules =  [ 'check_mk_base', 'snmp', 'notify', 'prediction' ]
+    modules =  [ 'check_mk_base', 'snmp', 'notify', 'prediction', 'cmc', 'inline_snmp' ]
     for module in modules:
         filename = modules_dir + "/" + module + ".py"
-        execfile(filename)
+        if os.path.exists(filename):
+            execfile(filename)
 
 except Exception, e:
     sys.stderr.write("Cannot read file %s: %s\n" % (filename, e))
@@ -522,7 +528,7 @@ def host_is_aggregated(hostname):
     if not service_aggregations:
         return False
 
-    # host might by explicitely configured as not aggregated
+    # host might by explicitly configured as not aggregated
     if in_binary_hostlist(hostname, non_aggregated_hosts):
         return False
 
@@ -531,7 +537,7 @@ def host_is_aggregated(hostname):
     is_aggr = len(host_extra_conf(hostname, host_conf_list)) > 0
     return is_aggr
 
-# Determines the aggretated service name for a given
+# Determines the aggregated service name for a given
 # host and service description. Returns "" if the service
 # is not aggregated
 def aggregated_service_name(hostname, servicedesc):
@@ -565,6 +571,40 @@ def aggregated_service_name(hostname, servicedesc):
                     return aggrname
     return ""
 
+#   .--Helpers-------------------------------------------------------------.
+#   |                  _   _      _                                        |
+#   |                 | | | | ___| |_ __   ___ _ __ ___                    |
+#   |                 | |_| |/ _ \ | '_ \ / _ \ '__/ __|                   |
+#   |                 |  _  |  __/ | |_) |  __/ |  \__ \                   |
+#   |                 |_| |_|\___|_| .__/ \___|_|  |___/                   |
+#   |                              |_|                                     |
+#   +----------------------------------------------------------------------+
+#   | Misc functions which do not belong to any other topic                |
+#   '----------------------------------------------------------------------'
+
+def is_tcp_host(hostname):
+    return in_binary_hostlist(hostname, tcp_hosts)
+
+def is_ping_host(hostname):
+    return not is_snmp_host(hostname) and not is_tcp_host(hostname)
+
+def check_period_of(hostname, service):
+    periods = service_extra_conf(hostname, service, check_periods)
+    if periods:
+        period = periods[0]
+        if period == "24X7":
+            return None
+        else:
+            return period
+    else:
+        return None
+
+def check_interval_of(hostname, checkname):
+    if not check_uses_snmp(checkname):
+        return # no values at all for non snmp checks
+    for match, minutes in host_extra_conf(hostname, snmp_check_interval):
+        if match is None or match == checkname:
+            return minutes # use first match
 
 #   +----------------------------------------------------------------------+
 #   |                      ____  _   _ __  __ ____                         |
@@ -575,15 +615,115 @@ def aggregated_service_name(hostname, servicedesc):
 #   |                                                                      |
 #   +----------------------------------------------------------------------+
 
+# Determine SNMP community for a specific host.  It the host is found
+# int the map snmp_communities, that community is returned. Otherwise
+# the snmp_default_community is returned (wich is preset with
+# "public", but can be overridden in main.mk
+def snmp_credentials_of(hostname):
+    try:
+        return explicit_snmp_communities[hostname]
+    except KeyError:
+        pass
+
+    communities = host_extra_conf(hostname, snmp_communities)
+    if len(communities) > 0:
+        return communities[0]
+
+    # nothing configured for this host -> use default
+    return snmp_default_community
+
+def get_snmp_character_encoding(hostname):
+    entries = host_extra_conf(hostname, snmp_character_encodings)
+    if len(entries) > 0:
+        return entries[0]
+
+def check_uses_snmp(check_type):
+    return snmp_info.get(check_type.split(".")[0]) != None
+
+def is_snmp_host(hostname):
+    return in_binary_hostlist(hostname, snmp_hosts)
+
+def is_bulkwalk_host(hostname):
+    if bulkwalk_hosts:
+        return in_binary_hostlist(hostname, bulkwalk_hosts)
+    else:
+        return False
+
+def is_snmpv2c_host(hostname):
+    return is_bulkwalk_host(hostname) or \
+        in_binary_hostlist(hostname, snmpv2c_hosts)
+
+def is_usewalk_host(hostname):
+    return in_binary_hostlist(hostname, usewalk_hosts)
+
+def inline_snmp_get_oid(hostname, oid):
+    s = init_snmp_host(hostname)
+
+    if oid[-2:] == ".*":
+        oid_prefix = oid[:-2]
+        func       = s.getnext
+        what       = 'GETNEXT'
+    else:
+        oid_prefix = oid
+        func       = s.get
+        what       = 'GET'
+
+    if opt_debug:
+        sys.stdout.write("Executing SNMP %s of %s on %s\n" % (what, oid_prefix, hostname))
+
+    var_list = netsnmp.VarList(netsnmp.Varbind(oid))
+    res = s.get(var_list)
+
+    for var in var_list:
+        value = var.val
+
+        if what == "GETNEXT" and not var.tag.startswith(oid_prefix + "."):
+            # In case of .*, check if prefix is the one we are looking for
+            value = None
+
+        elif value == 'NULL' or var.type in [ 'NOSUCHINSTANCE', 'NOSUCHOBJECT' ]:
+            value = None
+
+        elif value is not None:
+            value = strip_snmp_value(value)
+
+        if opt_verbose and opt_debug:
+            sys.stdout.write("=> [%r] %s\n" % (value, var.type))
+
+        return value
+
+#   .--Classic SNMP--------------------------------------------------------.
+#   |        ____ _               _        ____  _   _ __  __ ____         |
+#   |       / ___| | __ _ ___ ___(_) ___  / ___|| \ | |  \/  |  _ \        |
+#   |      | |   | |/ _` / __/ __| |/ __| \___ \|  \| | |\/| | |_) |       |
+#   |      | |___| | (_| \__ \__ \ | (__   ___) | |\  | |  | |  __/        |
+#   |       \____|_|\__,_|___/___/_|\___| |____/|_| \_|_|  |_|_|           |
+#   |                                                                      |
+#   +----------------------------------------------------------------------+
+#   | Non-inline SNMP handling code. Kept for compatibility.               |
+#   '----------------------------------------------------------------------'
+
+
+def snmp_timing_of(hostname):
+    timing = host_extra_conf(hostname, snmp_timing)
+    if len(timing) > 0:
+        return timing[0]
+    else:
+        return {}
+
+def snmp_port_spec(hostname):
+    port = snmp_port_of(hostname)
+    if port == None:
+        return ""
+    else:
+        return ":%d" % port
+
 # Returns command lines for snmpwalk and snmpget including
 # options for authentication. This handles communities and
 # authentication for SNMP V3. Also bulkwalk hosts
 def snmp_walk_command(hostname):
     return snmp_base_command('walk', hostname) + " -Cc"
 
-# Constructs the basic snmp commands for a host with all important information
-# like the commandname, SNMP version and credentials.
-# This function also changes snmpbulkwalk to snmpwalk for snmpv1.
 def snmp_base_command(what, hostname):
     # if the credentials are a string, we use that as community,
     # if it is a four-tuple, we use it as V3 auth parameters:
@@ -637,73 +777,39 @@ def snmp_base_command(what, hostname):
 
     return command + ' ' + options
 
-
-# Determine SNMP community for a specific host.  It the host is found
-# int the map snmp_communities, that community is returned. Otherwise
-# the snmp_default_community is returned (wich is preset with
-# "public", but can be overridden in main.mk
-def snmp_credentials_of(hostname):
-    communities = host_extra_conf(hostname, snmp_communities)
-    if len(communities) > 0:
-        return communities[0]
-
-    # nothing configured for this host -> use default
-    return snmp_default_community
-
-def snmp_timing_of(hostname):
-    timing = host_extra_conf(hostname, snmp_timing)
-    if len(timing) > 0:
-        return timing[0]
+def snmp_get_oid(hostname, ipaddress, oid):
+    if oid.endswith(".*"):
+        oid_prefix = oid[:-2]
+        commandtype = "getnext"
     else:
-        return {}
+        oid_prefix = oid
+        commandtype = "get"
 
-def get_snmp_character_encoding(hostname):
-    entries = host_extra_conf(hostname, snmp_character_encodings)
-    if len(entries) > 0:
-        return entries[0]
+    portspec = snmp_port_spec(hostname)
+    command = snmp_base_command(commandtype, hostname) + \
+              " -On -OQ -Oe -Ot %s%s %s 2>/dev/null" % (ipaddress, portspec, oid_prefix)
 
-def check_uses_snmp(check_type):
-    return snmp_info.get(check_type.split(".")[0]) != None
+    if opt_debug:
+        sys.stdout.write("Running '%s'\n" % command)
 
-def is_snmp_host(hostname):
-    return in_binary_hostlist(hostname, snmp_hosts)
+    snmp_process = os.popen(command, "r")
+    line = snmp_process.readline().strip()
+    item, value = line.split("=", 1)
+    value = value.strip()
+    if opt_debug:
+        sys.stdout.write("SNMP answer: ==> [%s]\n" % value)
+    if value.startswith('No more variables') or value.startswith('End of MIB') \
+       or value.startswith('No Such Object available') or value.startswith('No Such Instance currently exists'):
+        value = None
 
-def is_tcp_host(hostname):
-    return in_binary_hostlist(hostname, tcp_hosts)
+    # In case of .*, check if prefix is the one we are looking for
+    if commandtype == "getnext" and not item.startswith(oid_prefix + "."):
+        value = None
 
-def is_ping_host(hostname):
-    return not is_snmp_host(hostname) and not is_tcp_host(hostname)
-
-def is_bulkwalk_host(hostname):
-    if bulkwalk_hosts:
-        return in_binary_hostlist(hostname, bulkwalk_hosts)
-    else:
-        return False
-
-def is_snmpv2c_host(hostname):
-    return is_bulkwalk_host(hostname) or \
-        in_binary_hostlist(hostname, snmpv2c_hosts)
-
-def is_usewalk_host(hostname):
-    return in_binary_hostlist(hostname, usewalk_hosts)
-
-def check_period_of(hostname, service):
-    periods = service_extra_conf(hostname, service, check_periods)
-    if periods:
-        period = periods[0]
-        if period == "24X7":
-            return None
-        else:
-            return period
-    else:
-        return None
-
-def check_interval_of(hostname, checkname):
-    if not check_uses_snmp(checkname):
-        return # no values at all for non snmp checks
-    for match, minutes in host_extra_conf(hostname, snmp_check_interval):
-        if match is None or match == checkname:
-            return minutes * 60 # use first match
+    # Strip quotes
+    if value.startswith('"') and value.endswith('"'):
+        value = value[1:-1]
+    return value
 
 def get_single_oid(hostname, ipaddress, oid):
     # New in Check_MK 1.1.11: oid can end with ".*". In that case
@@ -727,43 +833,14 @@ def get_single_oid(hostname, ipaddress, oid):
         else:
             return None
 
-    if oid.endswith(".*"):
-        oid_prefix = oid[:-2]
-        commandtype = "getnext"
-    else:
-        oid_prefix = oid
-        commandtype = "get"
-
-    portspec = snmp_port_spec(hostname)
-    command = snmp_base_command(commandtype, hostname) + \
-         " -On -OQ -Oe -Ot %s%s %s 2>/dev/null" % (ipaddress, portspec, oid_prefix)
     try:
-        if opt_debug:
-            sys.stdout.write("Running '%s'\n" % command)
-
-        snmp_process = os.popen(command, "r")
-        line = snmp_process.readline().strip()
-        item, value = line.split("=", 1)
-        value = value.strip()
-        if opt_debug:
-            sys.stdout.write("SNMP answer: ==> [%s]\n" % value)
-        if value.startswith('No more variables') or value.startswith('End of MIB') \
-           or value.startswith('No Such Object available') or value.startswith('No Such Instance currently exists'):
-            value = None
-
-        # In case of .*, check if prefix is the one we are looking for
-        if commandtype == "getnext" and not item.startswith(oid_prefix + "."):
-            value = None
-
-        # Strip quotes
-        if value.startswith('"') and value.endswith('"'):
-            value = value[1:-1]
-        # try to remove text, only keep number
-        # value_num = value_text.split(" ")[0]
-        # value_num = value_num.lstrip("+")
-        # value_num = value_num.rstrip("%")
-        # value = value_num
+        if has_inline_snmp and use_inline_snmp:
+            value = inline_snmp_get_oid(hostname, oid)
+        else:
+            value = snmp_get_oid(hostname, ipaddress, oid)
     except:
+        if opt_debug:
+            raise
         value = None
 
     g_single_oid_cache[oid] = value
@@ -778,11 +855,12 @@ def snmp_scan(hostname, ipaddress):
 
     if opt_verbose:
         sys.stdout.write("Scanning host %s(%s) for SNMP checks..." % (hostname, ipaddress))
-    sys_descr = get_single_oid(hostname, ipaddress, ".1.3.6.1.2.1.1.1.0")
-    if sys_descr == None:
-        if opt_debug:
-            sys.stderr.write("no SNMP answer\n")
-        return []
+    if not in_binary_hostlist(hostname, snmp_without_sys_descr):
+        sys_descr = get_single_oid(hostname, ipaddress, ".1.3.6.1.2.1.1.1.0")
+        if sys_descr == None:
+            if opt_debug:
+                sys.stderr.write("no SNMP answer\n")
+            return []
 
     found = []
     for check_type, check in check_info.items():
@@ -799,7 +877,12 @@ def snmp_scan(hostname, ipaddress):
                 snmp_scan_functions.get(basename))
         if scan_function:
             try:
-                if scan_function(lambda oid: get_single_oid(hostname, ipaddress, oid)):
+                result = scan_function(lambda oid: get_single_oid(hostname, ipaddress, oid))
+                if result is not None and type(result) not in [ str, bool ]:
+                    if opt_debug:
+                        sys.stderr.write("[%s] Scan function returns invalid type (%s).\n" %
+                                                                (check_type, type(result)))
+                elif result:
                     found.append(check_type)
                     if opt_verbose:
                         sys.stdout.write(tty_green + tty_bold + check_type
@@ -842,7 +925,7 @@ def is_cluster(hostname):
 def clusters_of(hostname):
     return [ strip_tags(c) for c,n in clusters.items() if hostname in n ]
 
-# Determine wether a service (found on a physical host) is a clustered
+# Determine weather a service (found on a physical host) is a clustered
 # service and - if yes - return the cluster host of the service. If
 # no, returns the hostname of the physical host.
 def host_of_clustered_service(hostname, servicedesc):
@@ -850,7 +933,7 @@ def host_of_clustered_service(hostname, servicedesc):
     if not the_clusters:
         return hostname
 
-    # 1. New style: explicitlely assigned services
+    # 1. New style: explicitly assigned services
     for cluster, conf in clustered_services_of.items():
         nodes = nodes_of(cluster)
         if not nodes:
@@ -882,7 +965,7 @@ def host_of_clustered_service(hostname, servicedesc):
 # Format: ( checkname, item ) -> (params, description )
 
 # Keep a global cache of per-host-checktables, since this
-# operation is quiet lengty.
+# operation is quite lengthy.
 g_check_table_cache = {}
 # A further cache splits up all checks into single-host-entries
 # and those possibly matching multiple hosts. The single host entries
@@ -937,11 +1020,15 @@ def get_check_table(hostname):
         elif type(hostlist[0]) == str:
             hostlist = strip_tags(hostlist)
         elif hostlist != []:
-            raise MKGeneralException("Invalid entry '%r' in check table. Must be single hostname or list of hostnames" % hostinfolist)
+            raise MKGeneralException("Invalid entry '%r' in check table. Must be single hostname or list of hostnames" % hostlist)
 
         if hosttags_match_taglist(tags_of_host(hostname), tags) and \
                in_extraconf_hostlist(hostlist, hostname):
             descr = service_description(checkname, item)
+            if service_ignored(hostname, checkname, descr):
+                return
+            if hostname != host_of_clustered_service(hostname, descr):
+                return
             deps  = service_deps(hostname, descr)
             check_table[(checkname, item)] = (params, descr, deps)
 
@@ -952,6 +1039,16 @@ def get_check_table(hostname):
 
     for entry in g_multihost_checks:
         handle_entry(entry)
+
+    # Now add checks a cluster might receive from its nodes
+    if is_cluster(hostname):
+        for node in nodes_of(hostname):
+            node_checks = g_singlehost_checks.get(node, [])
+            for nodename, checkname, item, params in node_checks:
+                descr = service_description(checkname, item)
+                if hostname == host_of_clustered_service(node, descr):
+                    handle_entry((hostname, checkname, item, params))
+
 
     # Remove dependencies to non-existing services
     all_descr = set([ descr for ((checkname, item), (params, descr, deps)) in check_table.items() ])
@@ -1010,6 +1107,11 @@ def get_sorted_check_table(hostname):
 # be None in most cases -> to TCP connect on port 6556
 # HACK:
 special_agent_dir = agents_dir + "/special"
+if local_agents_dir:
+    special_agent_local_dir = local_agents_dir + "/special"
+else:
+    special_agent_local_dir = None
+
 def get_datasource_program(hostname, ipaddress):
     # First check WATO-style special_agent rules
     for agentname, ruleset in special_agents.items():
@@ -1017,7 +1119,12 @@ def get_datasource_program(hostname, ipaddress):
         if params: # rule match!
             # Create command line using the special_agent_info
             cmd_arguments = special_agent_info[agentname](params[0], hostname, ipaddress)
-            return '%s/agent_%s %s' % ( special_agent_dir, agentname, cmd_arguments)
+            if special_agent_local_dir and \
+                os.path.exists(special_agent_local_dir + "/agent_" + agentname):
+                path = special_agent_local_dir + "/agent_" + agentname
+            else:
+                path = special_agent_dir + "/agent_" + agentname
+            return path + " " + cmd_arguments
 
     programs = host_extra_conf(hostname, datasource_programs)
     if len(programs) == 0:
@@ -1050,14 +1157,65 @@ def lookup_ipaddress(hostname):
     if hostname in g_dns_cache:
         return g_dns_cache[hostname]
 
-    # No do the actual DNS lookup
+    # Prepare file based fall-back DNS cache in case resolution fails
+    init_ip_lookup_cache()
+
+    cached_ip = g_ip_lookup_cache.get(hostname)
+    if cached_ip and use_dns_cache:
+        g_dns_cache[hostname] = cached_ip
+        return cached_ip
+
+    # Now do the actual DNS lookup
     try:
         ipa = socket.gethostbyname(hostname)
+
+        # Update our cached address if that has changed or was missing
+        if ipa != cached_ip:
+            if opt_verbose:
+                print "Updating DNS cache for %s: %s" % (hostname, ipa)
+            g_ip_lookup_cache[hostname] = ipa
+            write_ip_lookup_cache()
+
+        g_dns_cache[hostname] = ipa # Update in-memory-cache
+        return ipa
+
     except:
-        g_dns_cache[hostname] = None
-        raise
-    g_dns_cache[hostname] = ipa
-    return ipa
+        # DNS failed. Use cached IP address if present, even if caching
+        # is disabled.
+        if cached_ip:
+            g_dns_cache[hostname] = cached_ip
+            return cached_ip
+        else:
+            g_dns_cache[hostname] = None
+            raise
+
+
+def init_ip_lookup_cache():
+    global g_ip_lookup_cache
+    if g_ip_lookup_cache is None:
+        try:
+            g_ip_lookup_cache = eval(file(var_dir + '/ipaddresses.cache').read())
+        except:
+            g_ip_lookup_cache = {}
+
+def write_ip_lookup_cache():
+    suffix = "." + str(os.getpid())
+    file(var_dir + '/ipaddresses.cache' + suffix, 'w').write(repr(g_ip_lookup_cache))
+    os.rename(var_dir + '/ipaddresses.cache' + suffix, var_dir + '/ipaddresses.cache')
+
+def do_update_dns_cache():
+    # Temporarily disable *use* of cache, we want to force an update
+    global use_dns_cache
+    use_dns_cache = False
+
+    if opt_verbose:
+        print "Updating DNS cache..."
+    for hostname in all_active_hosts() + all_active_clusters():
+        # Use intelligent logic. This prevents DNS lookups for hosts
+        # with statically configured addresses, etc.
+        lookup_ipaddress(hostname)
+
+
 
 def agent_port_of(hostname):
     ports = host_extra_conf(hostname, agent_ports)
@@ -1072,13 +1230,6 @@ def snmp_port_of(hostname):
         return None # do not specify a port, use default
     else:
         return ports[0]
-
-def snmp_port_spec(hostname):
-    port = snmp_port_of(hostname)
-    if port == None:
-        return ""
-    else:
-        return ":%d" % port
 
 def exit_code_spec(hostname):
     spec = {}
@@ -1104,7 +1255,7 @@ def service_description(check_type, item):
         descr_format = check_info[check_type]["service_description"]
 
     # Note: we strip the service description (remove spaces).
-    # One check defines "Pages %s" as a desription, but the item
+    # One check defines "Pages %s" as a description, but the item
     # can by empty in some cases. Nagios silently drops leading
     # and trailing spaces in the configuration file.
 
@@ -1202,6 +1353,17 @@ def parse_hostname_list(args):
                                  "not match any host.\n" % arg)
                 sys.exit(1)
     return hostlist
+
+def alias_of(hostname, fallback):
+    aliases = host_extra_conf(hostname, extra_host_conf.get("alias", []))
+    if len(aliases) == 0:
+        if fallback:
+            return fallback
+        else:
+            return hostname
+    else:
+        return aliases[0]
+
 
 
 def hostgroups_of(hostname):
@@ -1310,6 +1472,8 @@ def host_check_command(hostname, ip, is_clust):
 
     elif value == "agent" or value[0] == "service":
         service = value == "agent" and "Check_MK" or value[1]
+        if monitoring_core == "cmc":
+            return "check-mk-host-service!" + service
         command = "check-mk-host-custom-%d" % (len(hostcheck_commands_to_define) + 1)
         hostcheck_commands_to_define.append((command,
            'echo "$SERVICEOUTPUT:%s:%s$" && exit $SERVICESTATEID:%s:%s$' % (hostname, service, hostname, service)))
@@ -1317,6 +1481,13 @@ def host_check_command(hostname, ip, is_clust):
 
     elif value[0] == "tcp":
         return "check-mk-host-tcp!" + str(value[1])
+
+    elif value[0] == "custom":
+        try:
+            custom_commands_to_define.add("check-mk-custom")
+        except:
+            pass # not needed and not available with CMC
+        return "check-mk-custom!" + autodetect_plugin(value[1])
 
     raise MKGeneralException("Invalid value %r for host_check_command of host %s." % (
             value, hostname))
@@ -1675,12 +1846,12 @@ def create_nagios_hostdefs(outfile, hostname):
         if not extra_conf_parents:
             outfile.write("  parents\t\t\t%s\n" % ",".join(nodes))
 
-    # Output alias, but only if it's not define in extra_host_conf
-    aliases = host_extra_conf(hostname, extra_host_conf.get("alias", []))
-    if len(aliases) == 0:
+    # Output alias, but only if it's not defined in extra_host_conf
+    alias = alias_of(hostname, None)
+    if alias == None:
         outfile.write("  alias\t\t\t\t%s\n" % alias)
     else:
-        alias = make_utf8(aliases[0])
+        alias = make_utf8(alias)
 
 
     # Custom configuration last -> user may override all other values
@@ -1733,6 +1904,29 @@ def create_nagios_servicedefs(outfile, hostname):
     #   ___) |
     #  |____/   3. Services
 
+
+    def do_omit_service(hostname, description):
+        if service_ignored(hostname, None, description):
+            return True
+        if hostname != host_of_clustered_service(hostname, description):
+            return True
+        return False
+
+    def get_dependencies(hostname,servicedesc):
+        result = ""
+        for dep in service_deps(hostname, servicedesc):
+            result += """
+define servicedependency {
+  use\t\t\t\t%s
+  host_name\t\t\t%s
+  service_description\t%s
+  dependent_host_name\t%s
+  dependent_service_description %s
+}\n
+""" % (service_dependency_template, hostname, dep, hostname, servicedesc)
+
+        return result
+
     host_checks = get_check_table(hostname).items()
     host_checks.sort() # Create deterministic order
     aggregated_services_conf = set([])
@@ -1784,11 +1978,14 @@ def create_nagios_servicedefs(outfile, hostname):
 
         # Add the check interval of either the Check_MK service or
         # (if configured) the snmp_check_interval for snmp based checks
-        check_interval = 60 # default hardcoded interval
+        check_interval = 1 # default hardcoded interval
         # Customized interval of Check_MK service
         values = service_extra_conf(hostname, "Check_MK", extra_service_conf.get('check_interval', []))
         if values:
-            check_interval = int(values[0]) * 60
+            try:
+                check_interval = int(values[0])
+            except:
+                check_interval = float(values[0])
         value = check_interval_of(hostname, checkname)
         if value is not None:
             check_interval = value
@@ -1866,7 +2063,8 @@ define service {
 }
 """ % (active_service_template, hostname, extra_service_conf_of(hostname, "Check_MK")))
         # Inventory checks - if user has configured them. Not for clusters.
-        if inventory_check_interval and not is_cluster(hostname):
+        if inventory_check_interval and not is_cluster(hostname) \
+            and not service_ignored(hostname,None,'Check_MK inventory'):
             outfile.write("""
 define service {
   use\t\t\t\t%s
@@ -1892,6 +2090,9 @@ define servicedependency {
     if len(legchecks) > 0:
         outfile.write("\n\n# Legacy checks\n")
     for command, description, has_perfdata in legchecks:
+        if do_omit_service(hostname, description):
+            continue
+
         if description in used_descriptions:
             cn, it = used_descriptions[description]
             raise MKGeneralException(
@@ -1918,6 +2119,9 @@ define service {
 %s}
 """ % (template, hostname, make_utf8(description), simulate_command(command), extraconf))
 
+        # write service dependencies for legacy checks
+        outfile.write(get_dependencies(hostname,description))
+
     # legacy checks via active_checks
     actchecks = []
     needed_commands = []
@@ -1938,6 +2142,10 @@ define service {
 
             has_perfdata = act_info.get('has_perfdata', False)
             description = act_info["service_description"](params)
+
+            if do_omit_service(hostname, description):
+                continue
+
             # compute argument, and quote ! and \ for Nagios
             args = act_info["argument_function"](params).replace("\\", "\\\\").replace("!", "\\!")
 
@@ -1965,6 +2173,8 @@ define service {
 %s}
 """ % (template, hostname, make_utf8(description), simulate_command(command), extraconf))
 
+            # write service dependencies for active checks
+            outfile.write(get_dependencies(hostname,description))
 
     # Legacy checks via custom_checks
     custchecks = host_extra_conf(hostname, custom_checks)
@@ -1983,17 +2193,11 @@ define service {
             command_name = entry.get("command_name", "check-mk-custom")
             command_line = entry.get("command_line", "")
 
+            if do_omit_service(hostname, description):
+                continue
+
             if command_line:
-                plugin_name = command_line.split()[0]
-                if command_line[0] not in [ '$', '/' ]:
-                    try:
-                        for dir in [ "/local", "" ]:
-                            path = omd_root + dir + "/lib/nagios/plugins/"
-                            if os.path.exists(path + plugin_name):
-                                command_line = path + command_line
-                                break
-                    except:
-                        pass
+                command_line = autodetect_plugin(command_line)
 
             if "freshness" in entry:
                 freshness = "  check_freshness\t\t1\n" + \
@@ -2030,6 +2234,9 @@ define service {
 """ % (template, hostname, make_utf8(description), simulate_command(command),
        (command_line and not freshness) and 1 or 0, extraconf, freshness))
 
+            # write service dependencies for custom checks
+            outfile.write(get_dependencies(hostname,description))
+
     # Levels for host check
     if is_cluster(hostname):
         ping_command = 'check-mk-ping-cluster'
@@ -2046,6 +2253,19 @@ define service {
 }
 
 """ % (pingonly_template, ping_command, check_icmp_arguments(hostname), extra_service_conf_of(hostname, "PING"), hostname))
+
+def autodetect_plugin(command_line):
+    plugin_name = command_line.split()[0]
+    if command_line[0] not in [ '$', '/' ]:
+        try:
+            for dir in [ "/local", "" ]:
+                path = omd_root + dir + "/lib/nagios/plugins/"
+                if os.path.exists(path + plugin_name):
+                    command_line = path + command_line
+                    break
+        except:
+            pass
+    return command_line
 
 def simulate_command(command):
     if simulation_mode:
@@ -2199,7 +2419,7 @@ def create_nagios_config_contacts(outfile):
             # If the contact is in no contact group or all of the contact groups
             # of the contact have neither hosts nor services assigned - in other
             # words if the contact is not assigned to any host or service, then
-            # we do not create this contact in Nagios. It's useless and wil produce
+            # we do not create this contact in Nagios. It's useless and will produce
             # warnings.
             cgrs = [ cgr for cgr in contact.get("contactgroups", []) if cgr in contactgroups_to_define ]
             if not cgrs:
@@ -2216,6 +2436,7 @@ def create_nagios_config_contacts(outfile):
             for what in [ "host", "service" ]:
                 no = contact.get(what + "_notification_options", "")
                 if not no or not not_enabled:
+                    outfile.write("  %s_notifications_enabled\t0\n" % what)
                     no = "n"
                 outfile.write("  %s_notification_options\t%s\n" % (what, ",".join(list(no))))
                 outfile.write("  %s_notification_period\t%s\n" % (what, contact.get("notification_period", "24X7")))
@@ -2466,14 +2687,14 @@ def make_inventory(checkname, hostnamelist, check_only=False, include_state=Fals
                     else:
                         continue # user does not want this item to be checked
 
-                newcheck = '  ("%s", "%s", %r, %s),' % (hn, checkname, item, paramstring)
+                newcheck = '  ("%s", "%s", %r, %s),' % (hostname, checkname, item, paramstring)
                 newcheck += "\n"
                 if newcheck not in newchecks: # avoid duplicates if inventory outputs item twice
                     newchecks.append(newcheck)
                     if include_state:
-                        newitems.append( (hn, checkname, item, paramstring, state_type) )
+                        newitems.append( (hostname, checkname, item, paramstring, state_type) )
                     else:
-                        newitems.append( (hn, checkname, item) )
+                        newitems.append( (hostname, checkname, item) )
                     count_new += 1
 
 
@@ -2523,7 +2744,7 @@ def check_inventory(hostname):
             info = ", ".join([ "%s:%d" % (ct, count) for ct,count in newchecks ])
             statustext = { 0 : "OK", 1: "WARNING", 2:"CRITICAL" }.get(inventory_check_severity, "UNKNOWN")
             sys.stdout.write("%s - %d unchecked services (%s)\n" % (statustext, total_count, info))
-            # Put detailed list into long pluging output
+            # Put detailed list into long plugin output
             for hostname, checkname, item in newitems:
                 sys.stdout.write("%s: %s\n" % (checkname, service_description(checkname, item)))
             sys.exit(inventory_check_severity)
@@ -2540,11 +2761,11 @@ def check_inventory(hostname):
 
 
 def service_ignored(hostname, checktype, service_description):
-    if checktype in ignored_checktypes:
+    if checktype and checktype in ignored_checktypes:
         return True
     if in_boolean_serviceconf_list(hostname, service_description, ignored_services):
         return True
-    if checktype_ignored_for_host(hostname, checktype):
+    if checktype and checktype_ignored_for_host(hostname, checktype):
         return True
     return False
 
@@ -2753,7 +2974,7 @@ no_inventory_possible = None
     for var in [ 'check_mk_version', 'tcp_connect_timeout', 'agent_min_version',
                  'perfdata_format', 'aggregation_output_format',
                  'aggr_summary_hostname', 'nagios_command_pipe_path',
-                 'check_result_path', 'check_submission',
+                 'check_result_path', 'check_submission', 'monitoring_core',
                  'var_dir', 'counters_directory', 'tcp_cache_dir', 'tmp_dir',
                  'snmpwalks_dir', 'check_mk_basedir', 'nagios_user', 'rrd_path', 'rrdcached_socket',
                  'omd_root',
@@ -2761,6 +2982,7 @@ no_inventory_possible = None
                  'piggyback_max_cachefile_age',
                  'simulation_mode', 'agent_simulator', 'aggregate_check_mk', 'debug_log',
                  'check_mk_perfdata_with_times', 'livestatus_unix_socket',
+                 'has_inline_snmp', 'use_inline_snmp',
                  ]:
         output.write("%s = %r\n" % (var, globals()[var]))
 
@@ -2859,8 +3081,16 @@ no_inventory_possible = None
     # snmp hosts
     output.write("def is_snmp_host(hostname):\n   return %r\n\n" % is_snmp_host(hostname))
     output.write("def is_tcp_host(hostname):\n   return %r\n\n" % is_tcp_host(hostname))
-    output.write("def snmp_walk_command(hostname):\n   return %r\n\n" % snmp_walk_command(hostname))
     output.write("def is_usewalk_host(hostname):\n   return %r\n\n" % is_usewalk_host(hostname))
+    if has_inline_snmp and use_inline_snmp:
+        output.write("def is_snmpv2c_host(hostname):\n   return %r\n\n" % is_snmpv2c_host(hostname))
+        output.write("def is_bulkwalk_host(hostname):\n   return %r\n\n" % is_bulkwalk_host(hostname))
+        output.write("def snmp_timing_of(hostname):\n   return %r\n\n" % snmp_timing_of(hostname))
+        output.write("def snmp_credentials_of(hostname):\n   return %r\n\n" % snmp_credentials_of(hostname))
+        output.write("def snmp_port_of(hostname):\n   return %r\n\n" % snmp_port_of(hostname))
+    else:
+        output.write("def snmp_port_spec(hostname):\n    return %r\n\n" % snmp_port_spec(hostname))
+        output.write("def snmp_walk_command(hostname):\n   return %r\n\n" % snmp_walk_command(hostname))
 
     # IP addresses
     needed_ipaddresses = {}
@@ -2899,7 +3129,6 @@ no_inventory_possible = None
 
     # TCP and SNMP port of agent
     output.write("def agent_port_of(hostname):\n    return %d\n\n" % agent_port_of(hostname))
-    output.write("def snmp_port_spec(hostname):\n    return %r\n\n" % snmp_port_spec(hostname))
 
     # Exit code of Check_MK in case of various errors
     output.write("def exit_code_spec(hostname):\n    return %r\n\n" % exit_code_spec(hostname))
@@ -2989,7 +3218,7 @@ no_inventory_possible = None
 #   |                                                                      |
 #   +----------------------------------------------------------------------+
 
-opt_nowiki = False
+opt_nowiki   = False
 
 def get_tty_size():
     import termios,struct,fcntl
@@ -3027,7 +3256,155 @@ def list_all_manuals():
     table.sort()
     print_table(['Check type', 'Title'], [tty_bold, tty_normal], table)
 
+def read_manpage_catalog():
+    global g_manpage_catalog
+    g_manpage_catalog = {}
+    for checkname, path in all_manuals().items():
+        # Skip .* file (.f12)
+        a, filename = os.path.split(path)
+        if filename.startswith("."):
+            continue
+        parsed = parse_man_header(checkname, path)
+        cat = parsed["catalog"]
+        if not cat:
+            cat = [ "unsorted" ]
+
+        if cat[0] == "os":
+            for agent in parsed["agents"]:
+                acat = [cat[0]] + [agent] + cat[1:]
+                g_manpage_catalog.setdefault(tuple(acat), []).append(parsed)
+        else:
+            g_manpage_catalog.setdefault(tuple(cat), []).append(parsed)
+
+def manpage_browser(cat = ()):
+    read_manpage_catalog()
+    entries = []
+    subtrees = set([])
+    for c, e in g_manpage_catalog.items():
+        if c[:len(cat)] == cat:
+            if len(c) > len(cat):
+                subtrees.add(c[len(cat)])
+            else: # leaf node
+                entries = e
+                break
+
+    if entries and subtrees:
+        sys.stderr.write("ERROR: Catalog path %s contains man pages and subfolders.\n" % ("/".join(cat)))
+    if entries:
+        manpage_browse_entries(cat, entries)
+    elif subtrees:
+        manpage_browser_folder(cat, subtrees)
+
+def manpage_num_entries(cat):
+    num = 0
+    for c, e in g_manpage_catalog.items():
+        if c[:len(cat)] == cat:
+            num += len(e)
+    return num
+
+
+def manpage_browser_folder(cat, subtrees):
+    execfile(modules_dir + "/catalog.py", globals())
+    titles = []
+    for e in subtrees:
+        title = manpage_catalog_titles.get(e,e)
+        count = manpage_num_entries(cat + (e,))
+        if count:
+            title += " (%d)" % count
+        titles.append((title, e))
+    titles.sort()
+    choices = [ (str(n+1), t[0]) for n,t in enumerate(titles) ]
+
+    while True:
+        x = dialog_menu("Man Page Browser", manpage_display_header(cat), choices, "0", "Enter", cat and "Back" or "Quit")
+        if x[0] == True:
+            index = int(x[1])
+            subcat = titles[index-1][1]
+            manpage_browser(cat + (subcat,))
+        else:
+            break
+
+
+def manpage_browse_entries(cat, entries):
+    checks = []
+    for e in entries:
+        checks.append((e["title"], e["name"]))
+    checks.sort()
+    choices = [ (str(n+1), c[0]) for n,c in enumerate(checks) ]
+    while True:
+        x = dialog_menu("Man Page Browser", manpage_display_header(cat), choices, "0", "Show Manpage", "Back")
+        if x[0] == True:
+            index = int(x[1])-1
+            checkname = checks[index][1]
+            show_check_manual(checkname)
+        else:
+            break
+
+def manpage_display_header(cat):
+    return " -> ".join([manpage_catalog_titles.get(e,e) for e in cat ])
+
+def run_dialog(args):
+    import subprocess
+    env = {
+        "TERM": os.getenv("TERM", "linux"),
+        "LANG": "de_DE.UTF-8"
+    }
+    p = subprocess.Popen(["dialog", "--shadow"] + args, env = env, stderr = subprocess.PIPE)
+    response = p.stderr.read()
+    return 0 == os.waitpid(p.pid, 0)[1], response
+
+
+def dialog_menu(title, text, choices, defvalue, oktext, canceltext):
+    args = [ "--ok-label", oktext, "--cancel-label", canceltext ]
+    if defvalue != None:
+        args += [ "--default-item", defvalue ]
+    args += [ "--title", title, "--menu", text, "0", "0", "0" ] # "20", "60", "17" ]
+    for text, value in choices:
+        args += [ text, value ]
+    return run_dialog(args)
+
+
+def parse_man_header(checkname, path):
+    parsed = {}
+    parsed["name"] = checkname
+    parsed["path"] = path
+    key = None
+    lineno = 0
+    for line in file(path):
+        line = line.rstrip()
+        lineno += 1
+        try:
+            if not line:
+                parsed[key] += "\n\n"
+            elif line[0] == ' ':
+                parsed[key] += "\n" + line.lstrip()
+            elif line[0] == '[':
+                break # End of header
+            else:
+                key, rest = line.split(":", 1)
+                parsed[key] = rest.lstrip()
+        except Exception, e:
+            if opt_debug:
+                raise
+            sys.stderr.write("Invalid line %d in man page %s\n%s" % (
+                    lineno, path, line))
+            break
+
+    if "agents" not in parsed:
+        sys.stderr.write("Section agents missing in man page of %s\n" % (checkname))
+        sys.exit(1)
+    else:
+        parsed["agents"] = parsed["agents"].replace(" ","").split(",")
+
+    if parsed.get("catalog"):
+        parsed["catalog"] = parsed["catalog"].split("/")
+
+    return parsed
+
+
 def show_check_manual(checkname):
+    filename = all_manuals().get(checkname)
+
     bg_color = 4
     fg_color = 7
     bold_color = tty_white + tty_bold
@@ -3040,7 +3417,6 @@ def show_check_manual(checkname):
     parameters_color = tty(6,4,1)
     examples_color = tty(6,4,1)
 
-    filename = all_manuals().get(checkname)
     if not filename:
         sys.stdout.write("No manpage for %s. Sorry.\n" % checkname)
         return
@@ -3103,8 +3479,8 @@ def show_check_manual(checkname):
             # preserve the inner { and } in double braces and then replace the braces left
             return line.replace('{{', '{&#123;').replace('}}', '&#125;}').replace("{", "<b>").replace("}", "</b>")
 
-        def print_sectionheader(line, ignored):
-            print "H1:" + line
+        def print_sectionheader(line, title):
+            print "H1:" + title
 
         def print_subheader(line):
             print "H2:" + line
@@ -3265,20 +3641,19 @@ def show_check_manual(checkname):
         print_sectionheader(checkname, header['title'])
         if opt_nowiki:
             sys.stderr.write("<tr><td class=tt>%s</td><td>[check_%s|%s]</td></tr>\n" % (checkname, checkname, header['title']))
-        print_splitline(header_color_left, "Author:            ", header_color_right, header['author'])
-        print_splitline(header_color_left, "License:           ", header_color_right, header['license'])
-        distro = header['distribution']
-        if distro == 'check_mk':
-            distro = "official part of Check_MK"
-        print_splitline(header_color_left, "Distribution:      ", header_color_right, distro)
         ags = []
         for agent in header['agents'].split(","):
             agent = agent.strip()
             ags.append({ "vms" : "VMS", "linux":"Linux", "aix": "AIX",
                          "solaris":"Solaris", "windows":"Windows", "snmp":"SNMP",
-                         "openvms" : "OpenVMS" }
+                         "openvms" : "OpenVMS", "vsphere" : "vSphere" }
                          .get(agent, agent.upper()))
         print_splitline(header_color_left, "Supported Agents:  ", header_color_right, ", ".join(ags))
+        distro = header['distribution']
+        if distro == 'check_mk':
+            distro = "official part of Check_MK"
+        print_splitline(header_color_left, "Distribution:      ", header_color_right, distro)
+        print_splitline(header_color_left, "License:           ", header_color_right, header['license'])
 
         empty_line()
         print_textbody(header['description'])
@@ -3610,6 +3985,62 @@ def output_plain_hostinfo(hostname):
 
     sys.stdout.write(get_piggyback_info(hostname))
 
+def do_snmptranslate(walk):
+    walk = walk[0]
+
+    path_walk = "%s/%s" % (snmpwalks_dir, walk)
+    if not os.path.exists(path_walk):
+        print "Walk does not exist"
+        return
+
+    def translate(lines):
+        result_lines = []
+        try:
+            oids_for_command = []
+            for line in lines:
+                oids_for_command.append(line.split(" ")[0])
+
+            extra_mib_path = ""
+            if local_mibs_dir:
+                extra_mib_path = " -M+%s" % local_mibs_dir
+            command = "snmptranslate -m ALL%s %s 2>/dev/null" % (extra_mib_path, " ".join(oids_for_command))
+            process = os.popen(command, "r")
+            output  = process.read()
+            result  = output.split("\n")[0::2]
+            for idx, line in enumerate(result):
+                result_lines.append((line, lines[idx]))
+
+            # Add missing fields one by one
+            for line in lines[len(result_lines):]:
+                result_lines.extend(translate([line]))
+        except Exception, e:
+            print e
+
+        return result_lines
+
+
+    # Translate n-oid's per cycle
+    entries_per_cycle = 50
+    translated_lines = []
+
+    walk_lines = file(path_walk).readlines()
+    sys.stderr.write("Processing %d lines (%d per dot)\n" %  (len(walk_lines), entries_per_cycle))
+    for i in range(0, len(walk_lines), entries_per_cycle):
+        sys.stderr.write(".")
+        sys.stderr.flush()
+        process_lines = walk_lines[i:i+entries_per_cycle]
+        translated_lines.extend(translate(process_lines))
+    sys.stderr.write("\n")
+
+    # Output formatted
+    longest_translation = 40
+    for translation, line in translated_lines:
+        longest_translation = max(longest_translation, len(translation))
+
+    format_string = "%%-%ds %%s" % longest_translation
+    for translation, line in translated_lines:
+        sys.stdout.write(format_string % (translation, line))
+
 def do_snmpwalk(hostnames):
     if len(hostnames) == 0:
         sys.stderr.write("Please specify host names to walk on.\n")
@@ -3628,41 +4059,26 @@ def do_snmpwalk_on(hostname, filename):
     if opt_verbose:
         sys.stdout.write("%s:\n" % hostname)
     ip = lookup_ipaddress(hostname)
-    portspec = snmp_port_spec(hostname)
-    cmd = snmp_walk_command(hostname) + " -On -Ob -OQ -Ot %s%s " % (ip, portspec)
-    if opt_debug:
-        print 'Executing: %s' % cmd
-    out = file(filename, "w")
-    for oid in [ "", "1.3.6.1.4.1" ]: # SNMPv2-SMI::enterprises
-        oids = []
-        values = []
-        if opt_verbose:
-            sys.stdout.write("%s..." % (cmd + oid))
-            sys.stdout.flush()
-        count = 0
-        f = os.popen(cmd + oid)
-        while True:
-            line = f.readline()
-            if not line:
-                break
-            parts = line.split("=", 1)
-            if len(parts) != 2:
-                continue
-            oid, value = parts
-            value = value.rstrip("\n")
-            if value.lstrip().startswith('"'):
-                while value[-1] != '"':
-                    value += f.readline().rstrip("\n")
 
-            if not oid.startswith("."):
-                oid = "." + oid
-            oids.append(oid)
-            values.append(value)
-        for oid, value in zip(oids, values):
-            out.write("%s %s\n" % (oid, value.strip()))
-            count += 1
+    out = file(filename, "w")
+    for oid in [
+            ".1.3.6.1.2.1", # SNMPv2-SMI::mib-2
+            ".1.3.6.1.4.1"  # SNMPv2-SMI::enterprises
+          ]:
         if opt_verbose:
-            sys.stdout.write("%d variables.\n" % count)
+            sys.stdout.write("Walk on \"%s\"..." % oid)
+            sys.stdout.flush()
+
+        if has_inline_snmp and use_inline_snmp:
+            results = inline_snmpwalk_on_suboid(hostname, oid, strip_values = False)
+        else:
+            results = snmpwalk_on_suboid(hostname, ip, oid)
+
+        for oid, value in results:
+            out.write("%s %s\n" % (oid, value))
+
+        if opt_verbose:
+            sys.stdout.write("%d variables.\n" % len(results))
 
     out.close()
     if opt_verbose:
@@ -3699,9 +4115,14 @@ def show_paths():
         ( check_manpages_dir,          dir, inst, "Check manpages (for check_mk -M)"),
         ( lib_dir,                     dir, inst, "Binary plugins (architecture specific)"),
         ( pnp_templates_dir,           dir, inst, "Templates for PNP4Nagios"),
-        ( nagios_startscript,          fil, inst, "Startscript for Nagios daemon"),
-        ( nagios_binary,               fil, inst, "Path to Nagios executable"),
+    ]
+    if monitoring_core == "nagios":
+        paths += [
+            ( nagios_startscript,          fil, inst, "Startscript for Nagios daemon"),
+            ( nagios_binary,               fil, inst, "Path to Nagios executable"),
+        ]
 
+    paths += [
         ( default_config_dir,          dir, conf, "Directory that contains main.mk"),
         ( check_mk_configdir,          dir, conf, "Directory containing further *.mk files"),
         ( nagios_config_file,          fil, conf, "Main configuration file of Nagios"),
@@ -3804,6 +4225,10 @@ def dump_host(hostname):
         if is_usewalk_host(hostname):
             agenttypes.append("SNMP (use stored walk)")
         else:
+            if has_inline_snmp and use_inline_snmp:
+                inline = "yes"
+            else:
+                inline = "no"
             credentials = snmp_credentials_of(hostname)
             if is_bulkwalk_host(hostname):
                 bulk = "yes"
@@ -3812,7 +4237,8 @@ def dump_host(hostname):
             portinfo = snmp_port_of(hostname)
             if portinfo == None:
                 portinfo = 'default'
-            agenttypes.append("SNMP (community: '%s', bulk walk: %s, port: %s)" % (credentials, bulk, portinfo))
+            agenttypes.append("SNMP (community: '%s', bulk walk: %s, port: %s, inline: %s)" %
+                (credentials, bulk, portinfo, inline))
 
     if is_ping_host(hostname):
         agenttypes.append('PING only')
@@ -3899,40 +4325,46 @@ Copyright (C) 2009 Mathias Kettner
 
 def usage():
     print """WAYS TO CALL:
- check_mk [-n] [-v] [-p] HOST [IPADDRESS]  check all services on HOST
- check_mk [-u] -I [HOST ..]                inventory - find new services
- check_mk [-u] -II ...                     renew inventory, drop old services
- check_mk -u, --cleanup-autochecks         reorder autochecks files
- check_mk -N [HOSTS...]                    output Nagios configuration
- check_mk -C, --compile                    precompile host checks
- check_mk -U, --update                     precompile + create Nagios config
- check_mk -O, --reload                     precompile + config + Nagios reload
- check_mk -R, --restart                    precompile + config + Nagios restart
- check_mk -D, --dump [H1 H2 ..]            dump all or some hosts
- check_mk -d HOSTNAME|IPADDRESS            show raw information from agent
- check_mk --check-inventory HOSTNAME       check for items not yet checked
- check_mk --list-hosts [G1 G2 ...]         print list of hosts
- check_mk --list-tag TAG1 TAG2 ...         list hosts having certain tags
- check_mk -L, --list-checks                list all available check types
- check_mk -M, --man [CHECKTYPE]            show manpage for check CHECKTYPE
- check_mk --paths                          list all pathnames and directories
- check_mk -X, --check-config               check configuration for invalid vars
- check_mk --backup BACKUPFILE.tar.gz       make backup of configuration and data
- check_mk --restore BACKUPFILE.tar.gz      restore configuration and data
- check_mk --flush [HOST1 HOST2...]         flush all data of some or all hosts
- check_mk --donate                         Email data of configured hosts to MK
- check_mk --snmpwalk HOST1 HOST2 ...       Do snmpwalk on host
- check_mk --snmpget OID HOST1 HOST2 ...    Fetch single OIDs and output them
- check_mk --scan-parents [HOST1 HOST2...]  autoscan parents, create conf.d/parents.mk
- check_mk -P, --package COMMAND            do package operations
- check_mk --localize COMMAND               do localization operations
- check_mk -V, --version                    print version
- check_mk -h, --help                       print this help
+ cmk [-n] [-v] [-p] HOST [IPADDRESS]  check all services on HOST
+ cmk [-u] -I [HOST ..]                inventory - find new services
+ cmk [-u] -II ...                     renew inventory, drop old services
+ cmk -u, --cleanup-autochecks         reorder autochecks files
+ cmk -N [HOSTS...]                    output Nagios configuration
+ cmk -B                               create configuration for core
+ cmk -C, --compile                    precompile host checks
+ cmk -U, --update                     precompile + create config for core
+ cmk -O, --reload                     precompile + config + core reload
+ cmk -R, --restart                    precompile + config + core restart
+ cmk -D, --dump [H1 H2 ..]            dump all or some hosts
+ cmk -d HOSTNAME|IPADDRESS            show raw information from agent
+ cmk --check-inventory HOSTNAME       check for items not yet checked
+ cmk --update-dns-cache               update IP address lookup cache
+ cmk --list-hosts [G1 G2 ...]         print list of hosts
+ cmk --list-tag TAG1 TAG2 ...         list hosts having certain tags
+ cmk -L, --list-checks                list all available check types
+ cmk -M, --man [CHECKTYPE]            show manpage for check CHECKTYPE
+ cmk -m, --browse-man                 open interactive manpage browser
+ cmk --paths                          list all pathnames and directories
+ cmk -X, --check-config               check configuration for invalid vars
+ cmk --backup BACKUPFILE.tar.gz       make backup of configuration and data
+ cmk --restore BACKUPFILE.tar.gz      restore configuration and data
+ cmk --flush [HOST1 HOST2...]         flush all data of some or all hosts
+ cmk --donate                         Email data of configured hosts to MK
+ cmk --snmpwalk HOST1 HOST2 ...       Do snmpwalk on host
+ cmk --snmptranslate HOST             Do snmptranslate on walk
+ cmk --snmpget OID HOST1 HOST2 ...    Fetch single OIDs and output them
+ cmk --scan-parents [HOST1 HOST2...]  autoscan parents, create conf.d/parents.mk
+ cmk -P, --package COMMAND            do package operations
+ cmk --localize COMMAND               do localization operations
+ cmk --notify                         used to send notifications from core
+ cmk --create-rrd [--keepalive|SPEC]  create round robin database
+ cmk -V, --version                    print version
+ cmk -h, --help                       print this help
 
 OPTIONS:
   -v             show what's going on
   -p             also show performance data (use with -v)
-  -n             do not submit results to Nagios, do not save counters
+  -n             do not submit results to core, do not save counters
   -c FILE        read config file FILE instead of %s
   --cache        read info from cache file is present and fresh, use TCP
                  only, if cache file is absent or too old
@@ -3945,6 +4377,9 @@ OPTIONS:
   --debug        never catch Python exceptions
   --procs N      start up to N processes in parallel during --scan-parents
   --checks A,..  restrict checks/inventory to specified checks (tcp/snmp/check type)
+  --keepalive    used by Check_MK Mirco Core: run check and --notify in continous
+                 mode. Read data from stdin and von from cmd line and environment
+  --cmc-file=X   relative filename for CMC config file (used by -B/-U)
 
 NOTES:
   -I can be restricted to certain check types. Write '--checks df -I' if you
@@ -3973,7 +4408,7 @@ NOTES:
   -d does not work on clusters (such defined in main.mk) but only on
   real hosts.
 
-  --check-inventory make check_mk behave as Nagios plugins that
+  --check-inventory make check_mk behave as monitoring plugins that
   checks if an inventory would find new services for the host.
 
   --list-hosts called without argument lists all hosts. You may
@@ -4015,15 +4450,18 @@ NOTES:
   Check_MK and developing checks by donating hosts. This is completely
   voluntary and turned off by default.
 
-  --snmpwalk does a complete snmpwalk for the specifies hosts both
+  --snmpwalk does a complete snmpwalk for the specified hosts both
   on the standard MIB and the enterprises MIB and stores the
   result in the directory %s.
+
+  --snmptranslate does not contact the host again, but reuses the hosts
+  walk from the directory %s.%s
 
   --scan-parents uses traceroute in order to automatically detect
   hosts's parents. It creates the file conf.d/parents.mk which
   defines gateway hosts and parent declarations.
 
-  Nagios can call check_mk without options and the hostname and its IP
+  The core can call check_mk without options and the hostname and its IP
   address as arguments. Much faster is using precompiled host checks,
   though.
 
@@ -4031,14 +4469,19 @@ NOTES:
 """ % (check_mk_configfile,
        precompiled_hostchecks_dir,
        snmpwalks_dir,
+       snmpwalks_dir,
+       local_mibs_dir and ("\n  You can add further mibs to %s" % local_mibs_dir) or "",
        )
 
 
 def do_create_config():
-    out = file(nagios_objects_file, "w")
-    sys.stdout.write("Generating Nagios configuration...")
+    sys.stdout.write("Generating configuration for core (type %s)..." % monitoring_core)
     sys.stdout.flush()
-    create_nagios_config(out)
+    if monitoring_core == "cmc":
+        do_create_cmc_config(opt_cmc_relfilename)
+    else:
+        out = file(nagios_objects_file, "w")
+        create_nagios_config(out)
     sys.stdout.write(tty_ok + "\n")
 
 def do_output_nagios_conf(args):
@@ -4053,14 +4496,11 @@ def do_precompile_hostchecks():
     sys.stdout.write(tty_ok + "\n")
 
 
-def do_update():
+def do_update(with_precompile):
     try:
         do_create_config()
-        do_precompile_hostchecks()
-        sys.stdout.write(("Successfully created Nagios configuration file %s%s%s.\n\n" +
-                         "Please make sure that file will be read by Nagios.\n" +
-                         "You need to restart Nagios in order to activate " +
-                         "the changes.\n") % (tty_green + tty_bold, nagios_objects_file, tty_normal))
+        if with_precompile and monitoring_core != "cmc":
+            do_precompile_hostchecks()
 
     except Exception, e:
         sys.stderr.write("Configuration Error: %s\n" % e)
@@ -4070,30 +4510,36 @@ def do_update():
 
 
 def do_check_nagiosconfig():
-    command = nagios_binary + " -vp "  + nagios_config_file + " 2>&1"
-    sys.stdout.write("Validating Nagios configuration...")
-    if opt_verbose:
-        sys.stderr.write("Running '%s'" % command)
-    sys.stderr.flush()
+    if monitoring_core == 'nagios':
+        command = nagios_binary + " -vp "  + nagios_config_file + " 2>&1"
+        sys.stdout.write("Validating Nagios configuration...")
+        if opt_verbose:
+            sys.stderr.write("Running '%s'" % command)
+        sys.stderr.flush()
 
-    process = os.popen(command, "r")
-    output = process.read()
-    exit_status = process.close()
-    if not exit_status:
-        sys.stdout.write(tty_ok + "\n")
-        return True
+        process = os.popen(command, "r")
+        output = process.read()
+        exit_status = process.close()
+        if not exit_status:
+            sys.stdout.write(tty_ok + "\n")
+            return True
+        else:
+            sys.stdout.write("ERROR:\n")
+            sys.stderr.write(output)
+            return False
     else:
-        sys.stdout.write("ERROR:\n")
-        sys.stderr.write(output)
-        return False
+        return True
 
 
-def do_restart_nagios(only_reload):
+def do_restart_core(only_reload):
     action = only_reload and "load" or "start"
-    sys.stdout.write("Re%sing Nagios..." % action)
+    sys.stdout.write("Re%sing monitoring core..." % action)
     sys.stdout.flush()
-    os.putenv("CORE_NOVERIFY", "yes")
-    command = nagios_startscript + " re%s 2>&1" % action
+    if monitoring_core == "nagios":
+        os.putenv("CORE_NOVERIFY", "yes")
+        command = nagios_startscript + " re%s 2>&1" % action
+    else:
+        command = "omd re%s cmc 2>&1" % action
 
     process = os.popen(command, "r")
     output = process.read()
@@ -4110,7 +4556,7 @@ def do_restart(only_reload = False):
     try:
         backup_path = None
 
-        if not lock_nagios_objects_file():
+        if not lock_objects_file():
             sys.stderr.write("Other restart currently in progress. Aborting.\n")
             sys.exit(1)
 
@@ -4127,7 +4573,8 @@ def do_restart(only_reload = False):
             do_create_config()
         except Exception, e:
             sys.stderr.write("Error creating configuration: %s\n" % e)
-            os.rename(backup_path, nagios_objects_file)
+            if backup_path:
+                os.rename(backup_path, nagios_objects_file)
             if opt_debug:
                 raise
             sys.exit(1)
@@ -4135,8 +4582,9 @@ def do_restart(only_reload = False):
         if do_check_nagiosconfig():
             if backup_path:
                 os.remove(backup_path)
-            do_precompile_hostchecks()
-            do_restart_nagios(only_reload)
+            if monitoring_core != "cmc":
+                do_precompile_hostchecks()
+            do_restart_core(only_reload)
         else:
             sys.stderr.write("Nagios configuration is invalid. Rolling back.\n")
             if backup_path:
@@ -4157,7 +4605,7 @@ def do_restart(only_reload = False):
         sys.exit(1)
 
 restart_lock_fd = None
-def lock_nagios_objects_file():
+def lock_objects_file():
     global restart_lock_fd
     # In some bizarr cases (as cmk -RR) we need to avoid duplicate locking!
     if restart_locking and restart_lock_fd == None:
@@ -4368,7 +4816,7 @@ def scan_parents_of(hosts, silent=False, settings={}):
             sys.stdout.flush()
 
     # Now all run and we begin to read the answers. For each host
-    # we add a triple to gateways: the gateway, a scan state  and a diagnostig output
+    # we add a triple to gateways: the gateway, a scan state  and a diagnostic output
     gateways = []
     for host, ip, proc in procs:
         lines = [l.strip() for l in proc.readlines()]
@@ -4510,6 +4958,124 @@ def ip_to_dnsname(ip):
         return dnsname
     except:
         return None
+
+
+# Reset some global variable to their original value. This
+# is needed in keepalive mode.
+# We could in fact do some positive caching in keepalive
+# mode - e.g. the counters of the hosts could be saved in memory.
+def cleanup_globals():
+    global g_agent_already_contacted
+    g_agent_already_contacted = {}
+    global g_hostname
+    g_hostname = "unknown"
+    global g_counters
+    g_counters = {}
+    global g_infocache
+    g_infocache = {}
+    global g_broken_agent_hosts
+    g_broken_agent_hosts = set([])
+    global g_broken_snmp_hosts
+    g_broken_snmp_hosts = set([])
+    global g_inactive_timerperiods
+    g_inactive_timerperiods = None
+    global g_walk_cache
+    g_walk_cache = {}
+
+
+# Diagnostic function for detecting global variables that have
+# changed during checking. This is slow and canno be used
+# in production mode.
+def copy_globals():
+    import copy
+    global_saved = {}
+    for varname, value in globals().items():
+        # Some global caches are allowed to change.
+        if varname not in [ "g_service_description", "g_multihost_checks", "g_check_table_cache", "g_singlehost_checks", "total_check_outout" ] \
+            and type(value).__name__ not in [ "function", "module", "SRE_Pattern" ]:
+            global_saved[varname] = copy.copy(value)
+    return global_saved
+
+
+def do_check_keepalive():
+    global g_initial_times
+
+    def check_timeout(signum, frame):
+        raise MKCheckTimeout()
+
+    signal.signal(signal.SIGALRM, signal.SIG_IGN) # Prevent ALRM from CheckHelper.cc
+
+    global total_check_output
+    total_check_output = ""
+    if opt_debug:
+        before = copy_globals()
+
+    ipaddress_cache = {}
+
+    while True:
+        cleanup_globals()
+        hostname = sys.stdin.readline()
+        g_initial_times = os.times()
+        if not hostname:
+            break
+        hostname = hostname.strip()
+        if hostname == "*":
+            if opt_debug:
+                sys.stdout.write("Restarting myself...\n")
+            sys.stdout.flush()
+            os.execvp("cmk", sys.argv)
+        elif not hostname:
+            break
+
+        timeout = int(sys.stdin.readline())
+        try: # catch non-timeout exceptions
+            try: # catch timeouts
+                signal.signal(signal.SIGALRM, check_timeout)
+                signal.alarm(timeout)
+                if ';' in hostname:
+                    hostname, ipaddress = hostname.split(";", 1)
+                elif hostname in ipaddress_cache:
+                    ipaddress = ipaddress_cache[hostname]
+                else:
+                    if is_cluster(hostname):
+                        ipaddress = None
+                    else:
+                        try:
+                            ipaddress = lookup_ipaddress(hostname)
+                        except:
+                            raise MKGeneralException("Cannot resolve hostname %s into IP address" % hostname)
+                    ipaddress_cache[hostname] = ipaddress
+
+                status = do_check(hostname, ipaddress)
+                signal.signal(signal.SIGALRM, signal.SIG_IGN) # Prevent ALRM from CheckHelper.cc
+                signal.alarm(0)
+            except MKCheckTimeout:
+                signal.signal(signal.SIGALRM, signal.SIG_IGN) # Prevent ALRM from CheckHelper.cc
+                status = 3
+                total_check_output = "UNKNOWN - Check_MK timed out after %d seconds\n" % timeout
+
+            sys.stdout.write("%03d\n%08d\n%s" %
+                 (status, len(total_check_output), total_check_output))
+            sys.stdout.flush()
+            total_check_output = ""
+            cleanup_globals()
+
+            # Check if all global variables are clean, but only in debug mode
+            if opt_debug:
+                after = copy_globals()
+                for varname, value in before.items():
+                    if value != after[varname]:
+                        sys.stderr.write("WARNING: global variable %s has changed: %r ==> %s\n"
+                               % (varname, value, repr(after[varname])[:50]))
+                new_vars = set(after.keys()).difference(set(before.keys()))
+                if (new_vars):
+                    sys.stderr.write("WARNING: new variable appeared: %s" % ", ".join(new_vars))
+
+        except Exception, e:
+            if opt_debug:
+                raise
+            sys.stdout.write("UNKNOWN - %s\n3\n" % e)
+
 
 
 
@@ -4847,18 +5413,19 @@ def output_profile():
 # Do option parsing and execute main function -
 # if check_mk is not called as module
 if __name__ == "__main__":
-    short_options = 'SHVLCURODMd:Ic:nhvpXPuN'
+    short_options = 'SHVLCURODMmd:Ic:nhvpXPuNB'
     long_options = [ "help", "version", "verbose", "compile", "debug",
                      "list-checks", "list-hosts", "list-tag", "no-tcp", "cache",
-                     "flush", "package", "localize", "donate", "snmpwalk", "usewalk",
-                     "scan-parents", "procs=", "automation=", "notify",
-                     "snmpget=", "profile",
+                     "flush", "package", "localize", "donate", "snmpwalk", "snmptranslate",
+                     "usewalk", "scan-parents", "procs=", "automation=", "notify",
+                     "snmpget=", "profile", "keepalive", "create-rrd",
                      "no-cache", "update", "restart", "reload", "dump", "fake-dns=",
                      "man", "nowiki", "config-check", "backup=", "restore=",
-                     "check-inventory=", "paths", "cleanup-autochecks", "checks=" ]
+                     "check-inventory=", "paths", "cleanup-autochecks", "checks=",
+                     "cmc-file=", "browse-man", "list-man", "update-dns-cache" ]
 
     non_config_options = ['-L', '--list-checks', '-P', '--package', '-M', '--notify',
-                          '--man', '-V', '--version' ,'-h', '--help', '--automation', ]
+                          '--man', '-V', '--version' ,'-h', '--help', '--automation']
 
     try:
         opts, args = getopt.getopt(sys.argv[1:], short_options, long_options)
@@ -4897,6 +5464,8 @@ if __name__ == "__main__":
             opt_cleanup_autochecks = True
         elif o == '--fake-dns':
             fake_dns = a
+        elif o == '--keepalive':
+            opt_keepalive = True
         elif o == '--usewalk':
             opt_use_snmp_walk = True
         elif o == '--procs':
@@ -4909,6 +5478,8 @@ if __name__ == "__main__":
             seen_I += 1
         elif o == "--checks":
             inventory_checks = a
+        elif o == "--cmc-file":
+            opt_cmc_relfilename = a
 
     # Perform actions (major modes)
     try:
@@ -4930,11 +5501,14 @@ if __name__ == "__main__":
             elif o == '-N':
                 do_output_nagios_conf(args)
                 done = True
+            elif o == '-B':
+                do_update(False)
+                done = True
             elif o in [ '-C', '--compile' ]:
                 precompile_hostchecks()
                 done = True
             elif o in [ '-U', '--update' ] :
-                do_update()
+                do_update(True)
                 done = True
             elif o in [ '-R', '--restart' ] :
                 do_restart()
@@ -4968,8 +5542,14 @@ if __name__ == "__main__":
             elif o == '--donate':
                 do_donation()
                 done = True
+            elif o == '--update-dns-cache':
+                do_update_dns_cache()
+                done = True
             elif o == '--snmpwalk':
                 do_snmpwalk(args)
+                done = True
+            elif o == '--snmptranslate':
+                do_snmptranslate(args)
                 done = True
             elif o == '--snmpget':
                 do_snmpget(a, args)
@@ -4979,6 +5559,13 @@ if __name__ == "__main__":
                     show_check_manual(args[0])
                 else:
                     list_all_manuals()
+                done = True
+            elif o in [ '--list-man' ]:
+                read_manpage_catalog()
+                print pprint.pformat(g_manpage_catalog)
+                done = True
+            elif o in [ '-m', '--browse-man' ]:
+                manpage_browser()
                 done = True
             elif o == '--list-hosts':
                 l = list_all_hosts(args)
@@ -5011,6 +5598,12 @@ if __name__ == "__main__":
             elif o == '--notify':
                 read_config_files(False, True)
                 sys.exit(do_notify(args))
+            elif o == '--create-rrd':
+                read_config_files(False, True)
+                execfile(modules_dir + "/rrd.py")
+                do_create_rrd(args)
+                done = True
+
 
     except MKGeneralException, e:
         sys.stderr.write("%s\n" % e)
@@ -5093,9 +5686,11 @@ if __name__ == "__main__":
     if done:
         output_profile()
         sys.exit(0)
-    elif len(args) == 0 or len(args) > 2:
+    elif (len(args) == 0 and not opt_keepalive) or len(args) > 2:
         usage()
         sys.exit(1)
+    elif opt_keepalive:
+        do_check_keepalive()
     else:
 
         hostname = args[0]

@@ -1,6 +1,6 @@
-title: Check state of physical disks on IBM servers
+title: IBM servers: Physical Disks
 agents: snmp
-author: Florian Heigl <fh@mathias-kettner.de>
+catalog: hw/server/ibm
 license: GPL
 distribution: check_mk
 description:

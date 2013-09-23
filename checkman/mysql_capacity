@@ -1,6 +1,6 @@
-title: Size check for MySQL tablespaces
+title: Size of MySQL tablespaces
 agents: linux
-author: Florian Heigl <fh@mathias-kettner.de>
+catalog: app/mysql
 license: GPL
 distribution: check_mk
 description:

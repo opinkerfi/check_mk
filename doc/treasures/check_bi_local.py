@@ -24,46 +24,50 @@
 # to the Free Software Foundation, Inc., 51 Franklin St,  Fifth Floor,
 # Boston, MA 02110-1301 USA.
 
-# Example for creating real Nagios checks from BI aggregations. 
+# Example for creating real Nagios checks from BI aggregations.
 
 # Installation:
 # 1. Put this file in /usr/lib/check_mk_agent/local
 # 2. Make the file executable
 # 3. Add a correct url_prefix (OMD site and slash)
-#    user and password with read access to Multisite. 
+#    user with read access to Multisite.
+# 4. Add password OR automation secret of this user
 
 url_prefix = "" # non-OMD installations
 # url_prefix = "mysite/" # with OMD site name
 
-# HTTP Basic Auth
+# Authentication credentials
 user = "omdadmin"
+
+# use password OR automation_secret (you do not need both of them!!)
+# set the other one to the empty string ""
+# either:
 password = "omd"
-cookie = None
+automation_secret=""
 
-# Alternatively: Multisite Cookie authentication:
-# If you are using Cookie base authentication, then
-# login with your browser and get the cookie content
-# of auth_... from your browser settings and put
-# it here:
-# cookie = "omdadmin:1329218457.69:16b1d572fe059e00a89b7f24592733f2"
-
+# or:
+# password = ""
+# automation_secret = "LSEGRILPWQVLDBCYCKOC"
 
 # Do not change anything below
 
 import os, sys
 
-if cookie:
-    logininfo = ""
-    opts = "-b 'auth_=%s'" % cookie
+if automation_secret != "":
+    url = 'http://localhost/%scheck_mk/view.py?view_name=aggr_summary&output_format=python' \
+          '&_username=%s&_secret=%s' % (url_prefix, user, automation_secret)
+elif password != "":
+    url = 'http://localhost/%scheck_mk/login.py?_login=1&_username=%s&_password=%s' \
+          '&_origtarget=view.py%%3Fview_name=aggr_summary%%26output_format=python' % \
+          (url_prefix, user, password)
 else:
-    logininfo = "%s:%s@" % (user, password)
-    opts = ""
+    sys.stderr.write("You need to specify a password or an automation secret in the script source\n")
+    sys.exit(1)
 
-url = 'http://%slocalhost/%scheck_mk/view.py?view_name=aggr_summary&output_format=python' % \
-  (logininfo, url_prefix)
 
 try:
-    command = "curl --silent %s '%s'" % (opts, url)
+    command = "curl -u \"%s:%s\" -b /dev/null -L --noproxy localhost --silent '%s'" % \
+                    (user, password, url)
     output = os.popen(command).read()
     data = eval(output)
 except:

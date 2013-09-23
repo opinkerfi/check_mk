@@ -1,6 +1,6 @@
-title: Check MSSQL tablespace size information
+title: MSSQL tablespace size information
 agents: windows
-author: Lars Michelsen <lm@mathias-kettner.de>
+catalog: app/mssql
 license: GPL
 distribution: check_mk
 description:

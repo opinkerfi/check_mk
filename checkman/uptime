@@ -1,12 +1,13 @@
-title: Monitor uptime of operating system
+title: Uptime of operating system
 agents: linux
-author: Mathias Kettner <mk@mathias-kettner.de>
+catalog: os/misc
 license: GPL
 distribution: check_mk
 description:
- This check is always OK and simply outputs the uptime of the target
- systems (when the last boot was and how much time has elapsed since).
- It is always OK.
+ This check outputs the uptime of the target systems
+ (when the last boot was and how much time has elapsed since).
+ This check can go WARN or CRIT when the uptime is below or above certain
+ configurable levels.
 
 perfdata:
  The uptime in seconds.
@@ -14,3 +15,11 @@ perfdata:
 inventory:
  One check per system is created if the agent has a section {<<<uptime>>>}.
 
+[parameters]
+parameters (dict): A dictionary with the following optional keys:
+
+    {"min"}: Pair of integers of warn and crit: the minimum required uptime
+    uptime in seconds.
+
+    {"max"}: Pair of integers of warn and crit: the maximum allowed uptime
+    uptime in seconds.

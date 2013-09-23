@@ -1,6 +1,6 @@
-title: Simple check of summary health state of an IBM blade center
+title: IBM Blade Center: Summary Health State
 agents: snmp
-author: Mathias Kettner <mk@mathias-kettner.de>
+catalog: hw/server/ibm
 license: GPL
 distribution: check_mk
 description:

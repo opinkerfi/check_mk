@@ -65,6 +65,13 @@
 # define SUN_LEN(ptr) ((size_t) (((struct sockaddr_un *) 0)->sun_path) + strlen ((ptr)->sun_path))
 #endif
 
+void TRIGGER(int what)
+{
+    pthread_cond_broadcast(&g_wait_cond[WT_ALL]);
+    pthread_cond_broadcast(&g_wait_cond[what]);
+}
+
+
 NEB_API_VERSION(CURRENT_NEB_API_VERSION)
 extern int event_broker_options;
 extern int enable_environment_macros;
@@ -77,6 +84,7 @@ int g_num_clientthreads = 10;     /* allow 10 concurrent connections per default
 int g_num_queued_connections = 0;     /* current number of queued connections (for statistics) */
 int g_num_active_connections = 0;     /* current number of active connections (for statistics) */
 size_t g_thread_stack_size = 65536; /* stack size of threads */
+extern int g_disable_statehist_filtering;
 
 #define false 0
 #define true 1
@@ -385,8 +393,7 @@ int broker_check(int event_type, void *data)
             g_counters[COUNTER_HOST_CHECKS]++;
         }
     }
-    pthread_cond_broadcast(&g_wait_cond[WT_ALL]);
-    pthread_cond_broadcast(&g_wait_cond[WT_CHECK]);
+    TRIGGER(WT_CHECK);
     return result;
 }
 
@@ -396,8 +403,7 @@ int broker_comment(int event_type __attribute__ ((__unused__)), void *data)
     nebstruct_comment_data *co = (nebstruct_comment_data *)data;
     store_register_comment(co);
     g_counters[COUNTER_NEB_CALLBACKS]++;
-    pthread_cond_broadcast(&g_wait_cond[WT_ALL]);
-    pthread_cond_broadcast(&g_wait_cond[WT_COMMENT]);
+    TRIGGER(WT_COMMENT);
     return 0;
 }
 
@@ -406,8 +412,7 @@ int broker_downtime(int event_type __attribute__ ((__unused__)), void *data)
     nebstruct_downtime_data *dt = (nebstruct_downtime_data *)data;
     store_register_downtime(dt);
     g_counters[COUNTER_NEB_CALLBACKS]++;
-    pthread_cond_broadcast(&g_wait_cond[WT_ALL]);
-    pthread_cond_broadcast(&g_wait_cond[WT_DOWNTIME]);
+    TRIGGER(WT_DOWNTIME);
     return 0;
 }
 
@@ -416,8 +421,7 @@ int broker_log(int event_type __attribute__ ((__unused__)), void *data __attribu
 
     g_counters[COUNTER_NEB_CALLBACKS]++;
     g_counters[COUNTER_LOG_MESSAGES]++;
-    pthread_cond_broadcast(&g_wait_cond[WT_ALL]);
-    pthread_cond_broadcast(&g_wait_cond[WT_LOG]);
+    TRIGGER(WT_LOG);
     return 0;
 }
 
@@ -427,24 +431,21 @@ int broker_command(int event_type __attribute__ ((__unused__)), void *data)
     if (sc->type == NEBTYPE_EXTERNALCOMMAND_START)
         g_counters[COUNTER_COMMANDS]++;
     g_counters[COUNTER_NEB_CALLBACKS]++;
-    pthread_cond_broadcast(&g_wait_cond[WT_ALL]);
-    pthread_cond_broadcast(&g_wait_cond[WT_COMMAND]);
+    TRIGGER(WT_COMMAND);
     return 0;
 }
 
 int broker_state(int event_type __attribute__ ((__unused__)), void *data __attribute__ ((__unused__)))
 {
     g_counters[COUNTER_NEB_CALLBACKS]++;
-    pthread_cond_broadcast(&g_wait_cond[WT_ALL]);
-    pthread_cond_broadcast(&g_wait_cond[WT_STATE]);
+    TRIGGER(WT_STATE);
     return 0;
 }
 
 int broker_program(int event_type __attribute__ ((__unused__)), void *data __attribute__ ((__unused__)))
 {
     g_counters[COUNTER_NEB_CALLBACKS]++;
-    pthread_cond_broadcast(&g_wait_cond[WT_ALL]);
-    pthread_cond_broadcast(&g_wait_cond[WT_PROGRAM]);
+    TRIGGER(WT_PROGRAM);
     return 0;
 }
 
@@ -759,6 +760,10 @@ void livestatus_parse_arguments(const char *args_orig)
             }
             else if (!strcmp(left, "num_livecheck_helpers")) {
                 g_num_livehelpers = atoi(right);
+            }
+            else if (!strcmp(left, "disable_statehist_filtering"))
+            {
+                g_disable_statehist_filtering = atoi(right);
             }
             else {
                 logger(LG_INFO, "Ignoring invalid option %s=%s", left, right);

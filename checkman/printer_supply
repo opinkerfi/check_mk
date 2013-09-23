@@ -1,6 +1,6 @@
-title: Measure remaining filling level of printer supplys using PRINTER-MIB
+title: Generic Printer: Remaining filling level
 agents: snmp
-author: Peter Lauk <lauk@stuttgart-airport.com>
+catalog: hw/printer
 license: GPL
 distribution: check_mk
 description:

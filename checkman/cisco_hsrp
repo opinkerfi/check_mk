@@ -1,6 +1,6 @@
-title: Cisco HSRP group status
+title: Cisco Routers: HSRP Group Status
 agents: snmp
-author: Florian Heigl <fh@mathias-kettner.de>
+catalog: hw/network/cisco
 license: GPLv3
 distribution: check_mk
 description:

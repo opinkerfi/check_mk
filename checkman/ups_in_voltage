@@ -1,6 +1,6 @@
-title: Show the in voltage of devices
+title: Generic UPS Device: In voltage
 agents: snmp
-author: Bastian Kuhn <bk@mathias-kettner.de>
+catalog: hw/power
 license: GPL
 distribution: check_mk
 description:

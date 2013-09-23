@@ -1,6 +1,6 @@
-title: Monitor status of channel modules on Fujitsu ETERNUS DX storage systems
-agents: SNMP
-author: Lars Michelsen <lm@mathias-kettner.de>
+title: Fujitsu ETERNUS DX storage systems: Status of Channel Modules
+agents: snmp
+catalog: hw/storagehw/fujitsu
 license: GPL
 distribution: check_mk
 description:

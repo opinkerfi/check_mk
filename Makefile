@@ -39,6 +39,7 @@ LIVESTATUS_SOURCES = configure aclocal.m4 config.guess config.h.in config.sub \
 		     nagios/README nagios/*.h src/*.{h,c,cc} src/Makefile.{in,am} \
 		     depcomp install-sh api/python/{*.py,README} api/perl/*
 
+
 .PHONY: help install clean
 
 all: dist rpm deb
@@ -134,7 +135,9 @@ version:
           -o "$$(head -c 12 /etc/issue)" = "Ubuntu 11.04" \
           -o "$$(head -c 12 /etc/issue)" = "Ubuntu 11.10" \
           -o "$$(head -c 12 /etc/issue)" = "Ubuntu 12.04" \
-          -o "$$(head -c 12 /etc/issue)" = "Ubuntu 12.10" ] \
+          -o "$$(head -c 12 /etc/issue)" = "Ubuntu 12.10" \
+          -o "$$(head -c 12 /etc/issue)" = "Ubuntu 13.04" \
+          -o "$$(head -c 20 /etc/issue)" = "Debian GNU/Linux 6.0" ] \
           || { echo 'You are not on the reference system!' ; exit 1; }
 	@newversion=$$(dialog --stdout --inputbox "New Version:" 0 0 "$(VERSION)") ; \
 	if [ -n "$$newversion" ] ; then $(MAKE) NEW_VERSION=$$newversion setversion ; fi
@@ -224,7 +227,9 @@ mrproper:
 
 SOURCE_FILES = checkman/* modules/* checks/* notifications/* $$(find -name Makefile) \
           livestatus/src/*{cc,c,h} web/htdocs/*.{py,css} web/htdocs/js/*.js web/plugins/*/*.py \
-          doc/helpers/* scripts/setup.sh scripts/autodetect.py $(find -type f pnp-templates/*.php)
+          doc/helpers/* scripts/setup.sh scripts/autodetect.py $(find -type f pnp-templates/*.php) \
+          mkeventd/bin/mkeventd mkeventd/web/htdocs/*.py mkeventd/web/plugins/*/*.py mkeventd/src/*.c \
+          mkeventd/checks/*
 
 healspaces:
 	@echo "Removing trailing spaces from code lines..."

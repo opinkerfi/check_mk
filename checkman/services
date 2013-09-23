@@ -1,6 +1,6 @@
-title: Check Windows services
+title: Windows Services
 agents: windows
-author: Mathias Kettner <mk@mathias-kettner.de>
+catalog: os/ps
 license: GPL
 distribution: check_mk
 description:

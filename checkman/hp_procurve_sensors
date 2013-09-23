@@ -1,6 +1,6 @@
-title: Check for sensor status (PSU, Fan, Temp) in HP Procurve Switches
+title: HP Procurve Switches: Power Supplies, Fans, Temperature
 agents: snmp
-author: Lars Michelsen <lm@mathias-kettner.de>
+catalog: hw/network/hp
 license: GPL
 distribution: check_mk
 description:

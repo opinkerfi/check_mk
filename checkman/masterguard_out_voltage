@@ -1,6 +1,6 @@
-title: Show the out voltage of masterguard ups devices
+title: Masterguard UPS Devices: Out voltage
 agents: snmp
-author: Bastian Kuhn <bk@mathias-kettner.de>
+catalog: hw/power
 license: GPL
 distribution: check_mk
 description:

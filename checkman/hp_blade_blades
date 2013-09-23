@@ -1,6 +1,6 @@
-title: Check for blades in an HP BladeSystem Enclosure
+title: HP BladeSystem Enclosures: Health of Blades
 agents: snmp
-author: Lars Michelsen <lm@mathias-kettner.de>
+catalog: hw/server/hp
 license: GPL
 distribution: check_mk
 description:

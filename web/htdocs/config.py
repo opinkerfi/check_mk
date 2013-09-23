@@ -36,7 +36,13 @@
 
 import os, pprint, glob
 from lib import *
-import defaults
+
+# In case we start standalone and outside an check_mk enviroment,
+# we have another path for the defaults
+try:
+    import defaults
+except:
+    import defaults_standalone as defaults
 
 # Python 2.3 does not have 'set' in normal namespace.
 # But it can be imported from 'sets'
@@ -328,6 +334,13 @@ def get_role_permissions():
     # Loop all permissions
     # and for each permission loop all roles
     # and check wether it has the permission or not
+
+    # Make sure, builtin roles are present, even if not modified
+    # and saved with WATO.
+    for br in builtin_role_ids:
+        if br not in roles:
+            roles[br] = {}
+
     roleids = roles.keys()
     for perm in permissions_by_order:
         for role_id in roleids:
@@ -352,7 +365,7 @@ def save_user_file(name, content):
         write_settings_file(path, content)
     except Exception, e:
         raise MKConfigError(_("Cannot save %s options for user <b>%s</b> into <b>%s</b>: %s") % \
-                (name, user, path, e))
+                (name, user_id, path, e))
 
 # -------------------------------------------------------------------
 #    ____  _ _
@@ -372,7 +385,8 @@ def sitenames():
 def allsites():
     return dict( [(name, site(name))
                   for name in sitenames()
-                  if not site(name).get("disabled", False)] )
+                  if not site(name).get("disabled", False)
+                     and site(name)['socket'] != 'disabled' ] )
 
 def site(name):
     s = sites.get(name, {})
@@ -392,6 +406,8 @@ def site_is_local(name):
     sock = s.get("socket")
     return not sock or sock == "unix:" + defaults.livestatus_unix_socket
 
+# FIXME: Should this return True even if all sites but one are disabled?
+# -> should we use allsites() instead of "sites" directly?
 def is_multisite():
     if len(sites) > 1:
         return True

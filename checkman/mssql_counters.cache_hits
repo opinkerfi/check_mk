@@ -1,6 +1,6 @@
-title: Checks MSSQL cache hit ratio
+title: MSSQL cache hit ratio
 agents: windows
-author: Lars Michelsen <lm@mathias-kettner.de>
+catalog: app/mssql
 license: GPL
 distribution: check_mk
 description:

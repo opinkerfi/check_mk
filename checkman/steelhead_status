@@ -1,6 +1,6 @@
-title: Check overall status of Riverbed Steelhead appliance
+title: Riverbed Steelhead: Overall Status
 agents: snmp
-author: Mathias Kettner <mk@mathias-kettner.de>
+catalog: hw/network/riverbed
 license: GPL
 distribution: check_mk
 description:

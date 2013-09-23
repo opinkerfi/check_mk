@@ -1,6 +1,6 @@
-title: Check temperature sensor on a UPS Device
+title: Generic UPS Device: Temperature sensor
 agents: snmp
-author: Bastian Kuhn <bk@mathias-kettner.de>
+catalog: hw/power
 license: GPL
 distribution: check_mk
 description:

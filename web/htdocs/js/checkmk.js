@@ -134,35 +134,37 @@ function get_url(url, handler, data, errorHandler) {
         dyn = "?"+dyn;
     }
 
-    if (AJAX) {
-        AJAX.open("GET", url + dyn, true);
-        if (typeof handler === 'function')
-            AJAX.onreadystatechange = function() {
-                if (AJAX && AJAX.readyState == 4) {
-                    if (AJAX.status == 200) {
-                        handler(data, AJAX.responseText);
-                    }
-                    else if (AJAX.status == 401) {
-                        // This is reached when someone is not authenticated anymore
-                        // but has some webservices running which are still fetching
-                        // infos via AJAX. Reload the whole frameset or only the
-                        // single page in that case.
-                        if(top)
-                            top.location.reload();
-                        else
-                            document.location.reload();
-                    }
-                    else {
-                        if (typeof errorHandler !== 'undefined')
-                            errorHandler(data, AJAX.status);
-                    }
+    if (!AJAX) {
+        return null;
+    }
+
+    AJAX.open("GET", url + dyn, true);
+    if (typeof handler === 'function') {
+        AJAX.onreadystatechange = function() {
+            if (AJAX && AJAX.readyState == 4) {
+                if (AJAX.status == 200) {
+                    handler(data, AJAX.responseText);
+                }
+                else if (AJAX.status == 401) {
+                    // This is reached when someone is not authenticated anymore
+                    // but has some webservices running which are still fetching
+                    // infos via AJAX. Reload the whole frameset or only the
+                    // single page in that case.
+                    if(top)
+                        top.location.reload();
+                    else
+                        document.location.reload();
+                }
+                else {
+                    if (typeof errorHandler !== 'undefined')
+                        errorHandler(data, AJAX.status);
                 }
             }
-        AJAX.send(null);
-        return true;
-    } else {
-        return false;
+        }
     }
+
+    AJAX.send(null);
+    return AJAX;
 }
 
 function get_url_sync(url) {
@@ -636,7 +638,7 @@ function column_swap_ids(o1, o2) {
     var num2  = o2.id.split('_')[2];
 
     var o1 = null, o2 = null;
-    var objects = [ '', '_editor', '_up', '_down', '_label', '_link', '_tooltip' ];
+    var objects = [ '', '_editor', '_up', '_down', '_link', '_tooltip', '_label', '_title', '_join_index' ];
     for(var i = 0,len = objects.length; key = type+objects[i]+'_', i < len; i++) {
         o1 = document.getElementById(key + num1);
         o2 = document.getElementById(key + num2);
@@ -648,10 +650,6 @@ function column_swap_ids(o1, o2) {
             if(o1.name && o2.name) {
                 o1.name = key + num2;
                 o2.name = key + num1;
-            }
-            if(objects[i] === '_label') {
-                o1.innerHTML = 'Column ' + num2 + ':'
-                o2.innerHTML = 'Column ' + num1 + ':'
             }
         }
     }
@@ -863,10 +861,23 @@ function updateHeaderTime() {
 
     oTime.innerHTML = hours + ':' + min
 
-    min   = null;
-    hours = null;
-    t     = null;
-    oTime = null;
+    var oDate = document.getElementById('headerdate');
+    if (oDate) {
+        var day   = ("0" + t.getDate()).slice(-2);
+        var month = ("0" + (t.getMonth() + 1)).slice(-2);
+        var year  = t.getFullYear();
+        var date_format = oDate.getAttribute("format");
+        oDate.innerHTML = date_format.replace(/yyyy/, year).replace(/mm/, month).replace(/dd/, day);
+    }
+    day    = null;
+    month  = null;
+    year   = null;
+    format = null;
+    oDate  = null;
+    min    = null;
+    hours  = null;
+    t      = null;
+    oTime  = null;
 }
 
 var g_reload_error = false;
@@ -1698,6 +1709,17 @@ function valuespec_listof_fixarrows(oTbody) {
     }
 }
 
+function vs_textascii_button(img, text, how) {
+    var oInput = img.previousElementSibling;
+    while (oInput.tagName == "A")
+        oInput = oInput.previousElementSibling;
+    if (oInput.tagName != "INPUT")
+        oInput = oInput.firstChild; // complain mode
+    oInput.value = text + oInput.value; // TODO: how
+    oInput.focus();
+}
+
+
 function vs_passwordspec_randomize(img) {
     password = "";
     while (password.length < 8) {
@@ -1715,7 +1737,42 @@ function vs_passwordspec_randomize(img) {
     oInput.value = password;
 }
 
+function vs_duallist_switch(field, varprefix) {
+    if (field.id != varprefix + '_selected') {
+        // The other field is the one without "_unselected" suffix
+        var other_id = varprefix + '_selected';
+        var positive = true;
+    } else {
+        // The other field is the one with "_unselected" suffix
+        var other_id = varprefix + '_unselected';
+        var positive = false;
+    }
 
+    var other_field = document.getElementById(other_id);
+    if (!other_field)
+        return;
+
+    var helper = document.getElementById(varprefix);
+    if (!helper)
+        return;
+
+    // Move the selected option to the other select field
+    var selected = field.options[field.selectedIndex];
+    field.removeChild(selected);
+    other_field.appendChild(selected);
+    selected.selected = false;
+
+    // add remove from internal helper field
+    if (positive)
+        var pos_field = other_field;
+    else
+        var pos_field = field;
+    var texts = [];
+    for (var i = 0; i < pos_field.options.length; i++) {
+        texts.push(pos_field.options[i].value);
+    }
+    helper.value = texts.join('|')
+}
 
 function help_enable() {
     var aHelp = document.getElementById('helpbutton');
@@ -1740,6 +1797,24 @@ function help_switch(how) {
     for (var i=0; i<helpdivs.length; i++) {
         helpdivs[i].style.display = how ? "block" : "none";
     }
+
+    // small hack for wato ruleset lists, toggle the "float" and "nofloat"
+    // classes on those objects to make the layout possible
+    var rulesetdivs = document.getElementsByClassName('ruleset');
+    for (var i = 0; i < rulesetdivs.length; i++) {
+        if (how) {
+            if (has_class(rulesetdivs[i], 'float')) {
+                remove_class(rulesetdivs[i], 'float');
+                add_class(rulesetdivs[i], 'nofloat');
+            }
+        } else {
+            if (has_class(rulesetdivs[i], 'nofloat')) {
+                remove_class(rulesetdivs[i], 'nofloat');
+                add_class(rulesetdivs[i], 'float');
+            }
+        }
+    }
+
     get_url("ajax_switch_help.py?enabled=" + (how ? "yes" : ""));
 }
 
@@ -1903,6 +1978,27 @@ function view_switch_option(oDiv, viewname, option, choices) {
     handleReload('');
 }
 
+var g_hosttag_groups = {};
+
+function host_tag_update_value(prefix, grp) {
+    var value_select = document.getElementById(prefix + '_val');
+
+    // Remove all options
+    value_select.options.length = 0;
+
+    if(grp === '')
+        return; // skip over when empty group selected
+
+    var opt = null;
+    for (var i = 0, len = g_hosttag_groups[grp].length; i < len; i++) {
+        opt = document.createElement('option');
+        opt.value = g_hosttag_groups[grp][i][0];
+        opt.text  = g_hosttag_groups[grp][i][1];
+        value_select.appendChild(opt);
+    }
+    opt = null;
+    value_select = null;
+}
 
 // .-Availability----------------------------------------------------------.
 // |             _             _ _       _     _ _ _ _                     |

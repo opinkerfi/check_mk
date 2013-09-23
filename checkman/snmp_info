@@ -1,6 +1,6 @@
 title: Retrieve informational SNMP data about host
 agents: snmp
-author: Mathias Kettner <mk@mathias-kettner.de>
+catalog: generic
 license: GPL
 distribution: check_mk
 description:

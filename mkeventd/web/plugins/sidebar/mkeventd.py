@@ -53,7 +53,7 @@ def render_mkeventd_performance():
     # Hit rate
     try:
         write_line(_("Rule hit ratio"), "%.2f %%" % (
-           data["status_average_rule_hit_rate"] / 
+           data["status_average_rule_hit_rate"] /
            data["status_average_rule_trie_rate"] * 100))
     except: # division by zero
         write_line(_("Rule hit ratio"), _("-.-- %"))
@@ -62,7 +62,7 @@ def render_mkeventd_performance():
     # Time columns
     time_columns = [
         (_("Processing time per message"), "processing"),
-        (_("Tiime per client request"), "request"),
+        (_("Time per client request"), "request"),
         (_("Replication synchronization"), "sync"),
     ]
     for title, name in time_columns:

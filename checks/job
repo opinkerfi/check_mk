@@ -70,7 +70,7 @@ def job_parse(item, info):
         elif found and line[0] == '==>':
             break # Stop at next section
 
-        elif found:
+        elif found and len(line) == 2:
             key, val = line
             # Convert several keys/values
             if key == 'real_time':
@@ -133,4 +133,5 @@ check_info["job"] = {
     'inventory_function':      inventory_job,
     'service_description':     'Job %s',
     'group':                   'job',
+    'has_perfdata':            True,
 }

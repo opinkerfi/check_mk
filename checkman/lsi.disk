@@ -1,6 +1,6 @@
-title: Check disk of LSI RAID array
+title: Status of a disk in an LSI RAID array
 agents: linux
-author: Mathias Kettner <mk@mathias-kettner.de>
+catalog: os/storage
 license: GPL
 distribution: check_mk
 description:

@@ -200,11 +200,14 @@ def render_grouped_boxes(rows, view, group_painters, painters, num_columns, show
             else:
                 trclass = "odd"
             # state = row.get("service_state", row.get("aggr_state"))
-            state = row.get("service_state")
+            state = saveint(row.get("service_state"))
             if state == None:
-                state = row.get("host_state", 0)
+                state = saveint(row.get("host_state", 0))
                 if state > 0: state +=1 # 1 is critical for hosts
-            html.write('<tr class="data %s%d">' % (trclass, state))
+            stale = ''
+            if is_stale(row):
+                stale = ' stale'
+            html.write('<tr class="data %s%d%s">' % (trclass, state, stale))
             if show_checkboxes:
                 render_checkbox_td(view, row, len(painters))
             for p in painters:

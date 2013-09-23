@@ -65,13 +65,6 @@ def rrd_export(filename, ds, cf, fromtime, untiltime, rrdcached=None):
 
     return data["meta"]["step"], [ x[0] for x in data["data"] ]
 
-def pnp_cleanup(s):
-    return s \
-        .replace(' ',  '_') \
-        .replace(':',  '_') \
-        .replace('/',  '_') \
-        .replace('\\', '_')
-
 def find_ds_in_pnp_xmlfile(xml_file, varname):
     ds = None
     name = None
@@ -81,8 +74,8 @@ def find_ds_in_pnp_xmlfile(xml_file, varname):
             ds = line[4:].split('<')[0]
             if name == varname:
                 return int(ds)
-        elif line.startswith("<NAME>"):
-            name = line[6:].split('<')[0]
+        elif line.startswith("<LABEL>"):
+            name = line[7:].split('<')[0]
             if ds and name == varname:
                 return int(ds)
             else:
@@ -189,9 +182,11 @@ def compute_prediction(pred_file, timegroup, params, period_info, from_time, dsn
         # print "PUNKT %d --------------------------------------" % i
         point_line = []
         for from_time, scale, data in slices:
-            d = data[int(i / float(scale))]
-            if d != None:
-                point_line.append(d)
+            idx = int(i / float(scale))
+            if idx < len(data):
+                d = data[idx]
+                if d != None:
+                    point_line.append(d)
             # else:
             #     date_str = time.strftime("%Y-%m-%d %H:%M", time.localtime(fr + ((un - fr) * i / float(num_points))))
             #     print "Keine Daten fur %s / %d/%s/ %.2f " % (date_str, i, float(scale),i/float(scale))

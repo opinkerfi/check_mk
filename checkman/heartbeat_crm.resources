@@ -1,6 +1,6 @@
-title: Check status of the resources in heartbeat clusters using crm=yes
+title: Status of the resources in heartbeat clusters using crm=yes
 agents: linux
-author: Lars Michelsen <lm@mathias-kettner.de>
+catalog: os/services
 license: GPL
 distribution: check_mk
 description:

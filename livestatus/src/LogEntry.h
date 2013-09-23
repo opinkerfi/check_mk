@@ -32,26 +32,28 @@
 #define LOGCLASS_PASSIVECHECK      4 // passive checks
 #define LOGCLASS_COMMAND           5 // external commands
 #define LOGCLASS_STATE             6 // initial or current states
+#define LOGCLASS_TEXT              7 // specific text passages. e.g "logging initial states"
 #define LOGCLASS_INVALID          -1 // never stored
 #define LOGCLASS_ALL          0xffff
 
 #include "nagios.h"
 
-enum LogEntryType {	NONE,
-					ALERT_HOST,
-					ALERT_SERVICE,
-					DOWNTIME_ALERT_HOST,
-					DOWNTIME_ALERT_SERVICE,
-					STATE_HOST,
-					STATE_HOST_INITIAL,
-					STATE_SERVICE,
-					STATE_SERVICE_INITIAL,
-					FLAPPING_HOST,
-					FLAPPING_SERVICE,
-					TIMEPERIOD_TRANSITION,
-					NAGIOS_STARTING,
-					LOG_VERSION,
-					LOG_INITIAL_STATES,
+enum LogEntryType {
+    NONE,
+    ALERT_HOST,
+    ALERT_SERVICE,
+    DOWNTIME_ALERT_HOST,
+    DOWNTIME_ALERT_SERVICE,
+    STATE_HOST,
+    STATE_HOST_INITIAL,
+    STATE_SERVICE,
+    STATE_SERVICE_INITIAL,
+    FLAPPING_HOST,
+    FLAPPING_SERVICE,
+    TIMEPERIOD_TRANSITION,
+    NAGIOS_STARTING,
+    LOG_VERSION,
+    LOG_INITIAL_STATES,
 };
 
 struct LogEntry
@@ -80,17 +82,19 @@ struct LogEntry
     contact     *_contact;
     command     *_command;
 
-    LogEntry(unsigned lineno, char *line);
+    LogEntry(unsigned lineno, char *line, unsigned logclasses);
     ~LogEntry();
 
 private:
     bool handleStatusEntry();
+    bool handleStatusEntryBetter();
     bool handleNotificationEntry();
     bool handlePassiveCheckEntry();
     bool handleExternalCommandEntry();
     bool handleProgrammEntry();
     bool handleLogversionEntry();
     bool handleInfoEntry();
+    bool handleTextEntry();
     int serviceStateToInt(char *s);
     int hostStateToInt(char *s);
 };

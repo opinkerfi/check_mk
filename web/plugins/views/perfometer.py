@@ -167,6 +167,10 @@ def paint_perfometer(row):
     if not perf_data:
         return "", ""
 
+    if is_stale(row):
+        stale_css = " stale"
+    else:
+        stale_css = ""
     try:
         title, h = perf_painter(row, check_command, perf_data)
         content =  '<div class=content>%s</div>' % h
@@ -176,9 +180,9 @@ def paint_perfometer(row):
         # pnpgraph_present: -1 means unknown (path not configured), 0: no, 1: yes
         if 'X' in html.display_options and \
            row["service_pnpgraph_present"] != 0:
-            return "perfometer", ('<a href="%s">%s</a>' % (pnp_url(row, "service"), content))
+            return "perfometer" + stale_css, ('<a href="%s">%s</a>' % (pnp_url(row, "service"), content))
         else:
-            return "perfometer", content
+            return "perfometer" + stale_css, content
 
 
     except Exception, e:
@@ -191,7 +195,8 @@ multisite_painters["perfometer"] = {
     "short" : _("Perf-O-Meter"),
     "columns" : [ "service_perf_data", "service_state",
                   "service_check_command", "service_pnpgraph_present", "service_plugin_output" ],
-    "paint" : paint_perfometer
+    "paint" : paint_perfometer,
+    "sorter" : "svc_perf_val01",
 }
 
 load_web_plugins("perfometer", globals())

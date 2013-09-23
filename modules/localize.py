@@ -55,7 +55,6 @@ if local_locale_dir and os.path.exists(local_locale_dir + '/multisite.pot'):
 else:
     pot_file = locale_base + '/multisite.pot'
 
-
 try:
     os.makedirs(locale_base)
 except:
@@ -245,6 +244,13 @@ def localize_update(lang):
     except:
         pass
 
+    # Maybe initialize the file in the local hierarchy with the file in
+    # the default hierarchy
+    if local_locale_dir and not os.path.exists(po_file) \
+       and os.path.exists(locale_dir + '/%s/LC_MESSAGES/%s.po' % (lang, domain)):
+        file(po_file, 'w').write(file(locale_dir + '/%s/LC_MESSAGES/%s.po' % (lang, domain)).read())
+        sys.stdout.write('Initialize %s with the file in the default hierarchy\n' % po_file)
+
     localize_sniff()
 
     if not os.path.exists(po_file):
@@ -262,6 +268,13 @@ def localize_compile(lang):
         raise LocalizeException('Invalid language given. Available: %s' % ' '.join(get_languages()))
 
     init_files(lang)
+
+    # Maybe initialize the file in the local hierarchy with the file in
+    # the default hierarchy
+    if local_locale_dir and not os.path.exists(po_file) \
+       and os.path.exists(locale_dir + '/%s/LC_MESSAGES/%s.po' % (lang, domain)):
+        file(po_file, 'w').write(file(locale_dir + '/%s/LC_MESSAGES/%s.po' % (lang, domain)).read())
+        sys.stdout.write('Initialize %s with the file in the default hierarchy\n' % po_file)
 
     if not os.path.exists(po_file):
         raise LocalizeException('The .po file %s does not exist.' % po_file)

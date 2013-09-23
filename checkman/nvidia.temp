@@ -1,6 +1,6 @@
-title: Check temperatures of NVIDIA graphics card
+title: Temperatures of NVIDIA graphics card
 agents: linux
-author: Mathias Kettner <mk@mathias-kettner.de>
+catalog: os/hardware
 license: GPL
 distribution: check_mk
 description:

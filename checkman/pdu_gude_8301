@@ -1,6 +1,6 @@
-title: Gude PDU units
+title: Gude PDU units (8301): Power and Voltage
 agents: snmp
-author: Bastian Kuhn <bk@mathias-kettner.de>
+catalog: hw/power
 license: GPL
 distribution: check_mk
 description:

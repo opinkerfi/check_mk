@@ -1,6 +1,6 @@
-title: status of objects in VxVM
+title: Veritas VxVM: Status of Objects
 agents: hpux, linux
-author: Bastian Kuhn <bk@mathias-kettner.de>
+catalog: os/storage
 license: GPL
 distribution: check_mk
 description:

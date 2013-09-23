@@ -1,6 +1,6 @@
-title: Check temperature sensor on Cisco devices
+title: Temperature sensors (by CISCO-ENVMON-MIB)
 agents: snmp
-author: Mathias Kettner <mk@mathias-kettner.de>
+catalog: hw/network/cisco
 license: GPL
 distribution: check_mk
 description:

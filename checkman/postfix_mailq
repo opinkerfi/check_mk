@@ -1,6 +1,6 @@
-title: Checks the length of the postfix mailqueue
+title: Length of the postfix mailqueue
 agents: linux
-author: Lars Michelsen <lm@mathias-kettner.de>
+catalog: app/postfix
 license: GPL
 distribution: check_mk
 description:

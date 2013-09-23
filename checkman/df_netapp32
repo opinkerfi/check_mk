@@ -1,6 +1,6 @@
-title: Check used space in filesystems
+title: NetApp Filers: Used space in Filesystem Using 32-Bit Counters
 agents: snmp
-author: Mathias Kettner <mk@mathias-kettner.de>
+catalog: hw/storagehw/netapp
 license: GPL
 distribution: check_mk
 description:

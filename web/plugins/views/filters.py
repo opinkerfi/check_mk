@@ -66,6 +66,9 @@ declare_filter(201, FilterText("service", _("Service (exact match)"),           
                           _("Exact match, used for linking"))
 
 
+declare_filter(101, FilterText("hostgroupnameregex",    _("Hostgroup)"),        "hostgroup",    "hostgroup_name",      "hostgroup_name",    "~~"),
+                               _("Search field allowing regular expressions and partial matches on the names of hostgroups"))
+
 declare_filter(101, FilterText("servicegroupnameregex", _("Servicegroup"),   "servicegroup", "servicegroup_name",   "servicegroup_name", "~~"),
                           _("Search field allowing regular expression and partial matches"))
 
@@ -73,8 +76,6 @@ declare_filter(101, FilterText("servicegroupname", _("Servicegroup (enforced)"),
                           _("Exact match, used for linking"))
 
 declare_filter(202, FilterText("output",  _("Status detail"), "service", "service_plugin_output", "service_output", "~~"))
-
-
 
 class FilterIPAddress(Filter):
     def __init__(self):
@@ -111,12 +112,10 @@ declare_filter(102, FilterIPAddress())
 
 
 # Helper that retrieves the list of host/service/contactgroups via Livestatus
+# use alias by default but fallback to name if no alias defined
 def all_groups(what):
     groups = dict(html.live.query("GET %sgroups\nColumns: name alias\n" % what))
-    names = groups.keys()
-    names.sort()
-    # use alias by default but fallback to name if no alias defined
-    return [ (name, groups[name] or name) for name in names ]
+    return [ (name, groups[name] or name) for name in groups.keys() ]
 
 class FilterGroupCombo(Filter):
     def __init__(self, what, title, enforce):
@@ -136,7 +135,7 @@ class FilterGroupCombo(Filter):
         choices = all_groups(self.what.split("_")[-1])
         if not self.enforce:
             choices = [("", "")] + choices
-        html.select(self.htmlvars[0], choices)
+        html.sorted_select(self.htmlvars[0], choices)
         if not self.enforce:
             html.write(" <nobr>")
             html.checkbox(self.htmlvars[1], label=_("negate"))
@@ -351,8 +350,8 @@ declare_filter(132, FilterNagiosFlag("host",    "host_active_checks_enabled",   
 declare_filter(133, FilterNagiosFlag("host",    "host_notifications_enabled",       _("Host notifications enabled")))
 declare_filter(230, FilterNagiosFlag("service", "service_acknowledged",             _("Problem acknowledged")))
 declare_filter(231, FilterNagiosFlag("service", "service_in_notification_period",   _("Service in notif. per.")))
-declare_filter(232, FilterNagiosFlag("service", "service_active_checks_enabled",    _("Active checks enabled")))
-declare_filter(233, FilterNagiosFlag("service", "service_notifications_enabled",    _("Notifications enabled")))
+declare_filter(233, FilterNagiosFlag("service", "service_active_checks_enabled",    _("Active checks enabled")))
+declare_filter(234, FilterNagiosFlag("service", "service_notifications_enabled",    _("Notifications enabled")))
 declare_filter(236, FilterNagiosFlag("service", "service_is_flapping",              _("Flapping")))
 declare_filter(231, FilterNagiosFlag("service", "service_scheduled_downtime_depth", _("Service in downtime")))
 declare_filter(132, FilterNagiosFlag("host",    "host_scheduled_downtime_depth",    _("Host in downtime")))
@@ -360,6 +359,12 @@ declare_filter(232, FilterNagiosExpression("service", "in_downtime",            
             "Filter: service_scheduled_downtime_depth > 0\nFilter: host_scheduled_downtime_depth > 0\nOr: 2\n",
             "Filter: service_scheduled_downtime_depth = 0\nFilter: host_scheduled_downtime_depth = 0\nAnd: 2\n"))
 
+declare_filter(232, FilterNagiosExpression("host", "host_staleness",                _("Host is stale"),
+            "Filter: host_staleness >= %0.2f\n" % config.staleness_threshold,
+            "Filter: host_staleness < %0.2f\n" % config.staleness_threshold))
+declare_filter(232, FilterNagiosExpression("service", "service_staleness",          _("Service is stale"),
+            "Filter: service_staleness >= %0.2f\n" % config.staleness_threshold,
+            "Filter: service_staleness < %0.2f\n" % config.staleness_threshold))
 
 class FilterSite(Filter):
     def __init__(self, name, enforce):
@@ -395,6 +400,39 @@ class FilterSite(Filter):
 
 declare_filter(500, FilterSite("siteopt", False), _("Optional selection of a site"))
 declare_filter(501, FilterSite("site",    True),  _("Selection of site is enforced, use this filter for joining"))
+
+# name: internal id of filter
+# title: user displayed title of the filter
+# info: usually either "host" or "service"
+# column: a livestatus column of type int or float
+class FilterNumberRange(Filter): # type is int
+    def __init__(self, name, title, info, column):
+        self.column = column
+        varnames = [ name + "_from", name + "_until" ]
+        Filter.__init__(self, name, title, info, varnames, [])
+
+    def display(self):
+        html.write(_("From:") + "&nbsp;")
+        html.text_input(self.htmlvars[0], style="width: 80px;")
+        html.write(" &nbsp; " + _("To:") + "&nbsp;")
+        html.text_input(self.htmlvars[1], style="width: 80px;")
+
+    def filter(self, tablename):
+        lql = ""
+        for i, op in [ (0, ">="), (1, "<=") ]:
+            try:
+                txt = html.var(self.htmlvars[i])
+                int(txt.strip())
+                lql += "Filter: %s %s %s\n" % (self.column, op, txt.strip())
+            except:
+                pass
+        return lql
+
+
+declare_filter(232, FilterNumberRange("host_notif_number", _("Current Host Notification Number"), "host", "current_notification_number"))
+declare_filter(232, FilterNumberRange("svc_notif_number", _("Current Service Notification Number"), "service", "current_notification_number"))
+
+
 
 # Filter for setting time ranges, e.g. on last_state_change and last_check
 # Variante eins:
@@ -639,3 +677,85 @@ class BIServiceIsUsedFilter(FilterTristate):
 	return new_rows
 
 declare_filter(300, BIServiceIsUsedFilter())
+
+declare_filter(301, FilterText("downtime_id", _("Downtime ID"), "downtime", "downtime_id", "downtime_id", "="))
+
+class FilterHostTags(Filter):
+    def __init__(self):
+        self.count = 3
+        htmlvars = []
+        for num in range(self.count):
+            htmlvars += [ 'host_tag_%d_grp' % num, 'host_tag_%d_op' % num, 'host_tag_%d_val' % num ]
+
+        Filter.__init__(self,
+            name = 'host_tags',
+            title = _('Host Tags'),
+            info = 'host',
+            htmlvars = htmlvars,
+            link_columns = []
+        )
+
+    def display(self):
+        groups = [ (e[0], e[1]) for e in config.wato_host_tags ]
+        operators = [
+            ("is", _("=")),
+            ("isnot", _("&ne;")),
+        ]
+
+        # replace unicode strings, before writing out as "json"
+        grouped = {}
+        for entry in config.wato_host_tags:
+            grouped.setdefault(entry[0], [["", ""]])
+
+            for tag_entry in entry[2]:
+                tag   = tag_entry[0]
+                title = tag_entry[1]
+                if tag is None:
+                    tag = ''
+
+                if type(title) == unicode:
+                    title = title.encode("utf-8")
+                grouped[entry[0]].append([tag, title])
+
+        html.javascript('g_hosttag_groups = %r;' % grouped)
+        html.write('<table>')
+        for num in range(self.count):
+            prefix = 'host_tag_%d' % num
+            html.write('<tr><td>')
+            html.sorted_select(prefix + '_grp',
+                [("", "")] + groups,
+                onchange = 'host_tag_update_value(\'%s\', this.value)' % prefix,
+                attrs = {'style': 'width:129px'}
+            )
+            html.write('</td><td>')
+            html.sorted_select(prefix + '_op', [("", "")] + operators,
+                attrs = {'style': 'width:36px'})
+            html.write('</td><td>')
+            html.sorted_select(prefix + '_val',
+                html.var(prefix + '_grp') and grouped[html.var(prefix + '_grp')] or [("", "")],
+                attrs = {'style': 'width:129px'})
+            html.write('</td></tr>')
+        html.write('</table>')
+
+    def filter(self, infoname):
+        headers = []
+
+        for num in range(self.count):
+            prefix = 'host_tag_%d' % num
+            op  = html.var(prefix + '_op')
+            val = html.var(prefix + '_val')
+
+            if op and val:
+                operator = op != 'is' and '!~' or '~'
+                headers.append('Filter: custom_variables %s TAGS %s' % (operator, val))
+
+        if headers:
+            return '\n'.join(headers) + '\n'
+        else:
+            return ''
+
+    def double_height(self):
+        return True
+
+
+declare_filter(302, FilterHostTags())

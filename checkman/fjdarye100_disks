@@ -1,6 +1,6 @@
-title: Monitor status of disk in Fujitsu ETERNUS DX80 S2 storage systems
-agents: SNMP
-author: Philipp Hoefflin <hoefflin+cmk@fuh-e.de>
+title: Fujitsu ETERNUS DX80 S2 storage systems: Disks
+agents: snmp
+catalog: hw/storagehw/fujitsu
 license: GPLv2
 distribution: none
 description:

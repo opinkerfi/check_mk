@@ -42,7 +42,7 @@ def render_python(rows, view, group_painters, painters, num_columns, show_checkb
         html.write("[")
         for p in painters:
             tdclass, content = p[0]["paint"](row)
-            html.write(repr(htmllib.strip_tags(content)))
+            html.write(repr(html.strip_tags(content)))
             html.write(",")
         html.write("],")
     html.write("\n]\n")
@@ -63,7 +63,12 @@ def encode_string_json(s):
     return '"' + json_escape.sub(lambda m: json_encoding_table[m.group(0)], s) + '"'
 
 
-def render_json(rows, view, group_painters, painters, num_columns, show_checkboxes):
+def render_json(rows, view, group_painters, painters, num_columns, show_checkboxes, export = False):
+    if export:
+        html.req.content_type = "appliation/json; charset=UTF-8"
+        filename = '%s-%s.json' % (view['name'], time.strftime('%Y-%m-%d_%H-%M-%S', time.localtime(time.time())))
+        html.req.headers_out['Content-Disposition'] = 'Attachment; filename=%s' % filename
+
     html.write("[\n")
 
     first = True
@@ -74,7 +79,7 @@ def render_json(rows, view, group_painters, painters, num_columns, show_checkbox
         else:
             html.write(",")
         content = p[0]["name"]
-        stripped = htmllib.strip_tags(content)
+        stripped = html.strip_tags(content)
         utf8 = stripped.encode("utf-8")
         html.write(encode_string_json(utf8))
     html.write("]")
@@ -87,9 +92,9 @@ def render_json(rows, view, group_painters, painters, num_columns, show_checkbox
                 first = False
             else:
                 html.write(",")
-            tdclass, content = p[0]["paint"](row)
-            content = content.replace("<br>","\n")
-            stripped = htmllib.strip_tags(content)
+            tdclass, content = paint_painter(p[0], row)
+            content = str(content).replace("<br>","\n")
+            stripped = html.strip_tags(content)
             utf8 = stripped.encode("utf-8")
             html.write(encode_string_json(utf8))
         html.write("]")
@@ -97,9 +102,60 @@ def render_json(rows, view, group_painters, painters, num_columns, show_checkbox
     html.write("\n]\n")
 
 
+multisite_layouts["json_export"] = {
+    "title"  : _("JSON data export"),
+    "render" : lambda a,b,c,d,e,f: render_json(a,b,c,d,e,f,True),
+    "group"  : False,
+    "hide"   : True,
+}
+
 multisite_layouts["json"] = {
     "title"  : _("JSON data output"),
-    "render" : render_json,
+    "render" : lambda a,b,c,d,e,f: render_json(a,b,c,d,e,f,False),
+    "group"  : False,
+    "hide"   : True,
+}
+
+
+def render_csv(rows, view, group_painters, painters, num_columns, show_checkboxes, export = False):
+    if export:
+        html.req.content_type = "text/csv; charset=UTF-8"
+        filename = '%s-%s.csv' % (view['name'], time.strftime('%Y-%m-%d_%H-%M-%S', time.localtime(time.time())))
+        html.req.headers_out['Content-Disposition'] = 'Attachment; filename=%s' % filename
+
+    csv_separator = html.var("csv_separator", ";")
+    first = True
+    for p in painters:
+        if first:
+            first = False
+        else:
+            html.write(csv_separator)
+        content = p[0]["name"]
+        stripped = html.strip_tags(content).replace('\n', '').replace('"', '""')
+        html.write('"%s"' % stripped.encode("utf-8"))
+
+    for row in rows:
+        html.write("\n")
+        first = True
+        for p in painters:
+            if first:
+                first = False
+            else:
+                html.write(csv_separator)
+            tdclass, content = paint_painter(p[0], row)
+            stripped = html.strip_tags(content).replace('\n', '').replace('"', '""')
+            html.write('"%s"' % stripped.encode("utf-8"))
+
+multisite_layouts["csv_export"] = {
+    "title"  : _("CSV data export"),
+    "render" : lambda a,b,c,d,e,f: render_csv(a,b,c,d,e,f,True),
+    "group"  : False,
+    "hide"   : True,
+}
+
+multisite_layouts["csv"] = {
+    "title"  : _("CSV data output"),
+    "render" : lambda a,b,c,d,e,f: render_csv(a,b,c,d,e,f,False),
     "group"  : False,
     "hide"   : True,
 }

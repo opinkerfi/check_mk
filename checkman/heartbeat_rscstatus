@@ -1,6 +1,6 @@
-title: Check the ressource status of heartbeat nodes using crm=no
+title: Ressource status of heartbeat nodes using crm=no
 agents: linux
-author: Lars Michelsen <lm@mathias-kettner.de>
+catalog: os/services
 license: GPL
 distribution: check_mk
 description:

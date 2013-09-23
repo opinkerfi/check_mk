@@ -28,14 +28,16 @@ import defaults, config
 
 def page_index():
     start_url = html.var("start_url", config.start_url)
-    html.req.headers_out.add("Cache-Control", "max-age=7200, public");
+    # Do not cache the index page -> caching problems when page is accessed
+    # while not logged in
+    #html.req.headers_out.add("Cache-Control", "max-age=7200, public");
+    html.req.headers_out.add("Cache-Control", "no-cache");
     if "%s" in config.page_heading:
-        heading = config.page_heading % (defaults.omd_site or _("Multisite"))
+        heading = config.page_heading % (config.site(defaults.omd_site).get('alias', _("Multisite")))
     else:
         heading = config.page_heading
 
-    html.write("""
-<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Frameset//EN" "http://www.w3.org/TR/html4/frameset.dtd">
+    html.write("""<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Frameset//EN" "http://www.w3.org/TR/html4/frameset.dtd">
 <html>
 <head>
  <title>%s</title>

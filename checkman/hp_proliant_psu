@@ -1,6 +1,6 @@
-title: Check state of PSUs in HP Proliant servers
+title: HP Proliant Servers: Power Supplies
 agents: snmp
-author: Lars Michelsen <lm@mathias-kettner.de>
+catalog: hw/server/hp
 license: GPL
 distribution: check_mk
 description:

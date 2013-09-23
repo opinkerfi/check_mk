@@ -1,6 +1,6 @@
-title: Check operational status of network interfaces
+title: Operational status of network interfaces - DEPRECATED
 agents: snmp
-author: Mathias Kettner <mk@mathias-kettner.de>
+catalog: hw/network/generic
 license: GPL
 distribution: check_mk
 description:

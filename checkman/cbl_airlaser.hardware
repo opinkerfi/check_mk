@@ -1,6 +1,6 @@
-title: Check of runtime Status CBL Airlaser
+title: CBL Airlaser: General Status
 agents: snmp
-author: Florian Heigl <fh@mathias-kettner.de>
+catalog: hw/network/cbl
 license: GPL
 distribution: check_mk
 description:

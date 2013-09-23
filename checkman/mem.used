@@ -1,6 +1,6 @@
-title: Check usage of physical and virtual RAM
+title: Usage of physical and virtual RAM
 agents: linux
-author: Mathias Kettner <mk@mathias-kettner.de>
+catalog: os/kernel
 license: GPL
 distribution: check_mk
 description:

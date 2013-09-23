@@ -1,6 +1,6 @@
-title: Check used space in filesystems via SNMP
+title: Used space in filesystems via SNMP
 agents: snmp
-author: Mathias Kettner <mk@mathias-kettner.de>
+catalog: os/storage
 license: GPL
 distribution: check_mk
 description:

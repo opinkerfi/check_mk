@@ -379,7 +379,7 @@ ask_dir rrd_path /var/lib/nagios/rrd $HOMEBASEDIR/var/nagios/rrd $OMD_ROOT/var/p
     "Configure the directory PNP4Nagios stores the RRD database files in"
 
 ask_dir rrdcached_socket /tmp/rrdcached.sock $HOMEBASEDIR/var/rrdcached.sock $OMD_ROOT/tmp/run/rrdached.sock "rrdcached socket" \
-    "If you use the rrdcached to process performance data from Nagios, 
+    "If you use the rrdcached to process performance data from Nagios,
 you can configure the socket of the rrdcached here to make the prediction
 feature use it"
 
@@ -612,6 +612,7 @@ VARDIR=$mkeventdstatedir
 CONFDIR=$confdir
 MKEVENTD_SYSLOG=off
 RUNUSER=$nagiosuser
+LIVESTATUS=$livesock
 # DEBUG="--debug --foreground"
 
 PIDFILE=\$SOCKETDIR/pid

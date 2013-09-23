@@ -53,120 +53,139 @@ echo Version: 1.2.3i1
 echo AgentOS: solaris
 
 
-# Find out what type of system we run.
-# A standard Zone that will not have hardware of any kind?
-# A Global Zone with hardware?
-if type zonename > /dev/null 2>&1 ; then
-  if [ `zonename` = "global" ]; then
-      platform="global_zone"
-  else
-      platform="zone"
-  fi
+# Find out what zone we are running in
+# Treat all pre-Solaris 10 systems as "global"
+if type zonename &>/dev/null
+then
+    zonename=$(zonename)
+    pszone="-z $zonename"
 else
-# Otherwise we have a normal or hard-partitioned system
-  platform="hardware"
+    zonename="global"
+    pszone="-A"
 fi
 
+
+# Filesystem usage for UFS and VXFS
 echo '<<<df>>>'
 for fs in ufs vxfs
 do
-   df -lk -F $fs 2>/dev/null | sed 1d | \
-   while read Filesystem kbytes used avail capacity Mountedon
-   do
-      kbytes=`expr $used + $avail`
-      echo "${Filesystem} $fs ${kbytes} ${used} ${avail} ${capacity} ${Mountedon}"
-   done
+    df -l -k -F $fs 2>/dev/null | sed 1d | \
+    while read Filesystem kbytes used avail capacity Mountedon
+    do
+        kbytes=$(($used + $avail))
+        echo "$Filesystem $fs $kbytes $used $avail $capacity $Mountedon"
+    done
 done
 
 # Filesystem usage for ZFS
-if type zfs > /dev/null 2>&1 ; then
+if type zfs &>/dev/null
+then
     echo '<<<zfsget>>>'
     zfs get -Hp name,quota,used,avail,mountpoint,type
     echo '[df]'
-    df -lk -F zfs | sed 1d
+    df -l -k -F zfs 2>/dev/null | sed 1d
 fi
+
 
 # Processes
 echo '<<<ps>>>'
-ps -A -o user,vsz,rss,pcpu,args | sed -e 1d -e 's/ *\([^ ]*\) *\([^ ]*\) *\([^ ]*\) *\([^ ]*\) */(\1,\2,\3,\4) /'
+ps -o user,vsz,rss,pcpu,args $pszone | \
+sed -e 1d -e 's/ *\([^ ]*\) *\([^ ]*\) *\([^ ]*\) *\([^ ]*\) */(\1,\2,\3,\4) /'
 
-# You need statgrab to be installed. You'll find it 
-# here: http://www.i-scream.org/libstatgrab/ 
 
-statgrab_vars="const. cpu. disk. general. mem. page. proc. swap. user."
-statgrab_sections="proc cpu disk page"
-# Only collect net stats if we aren't in a unpriv. zone.
-if [ "$platform" != "zone" ]; then
-    statgrab_vars="$statgrab_vars net."
-    statgrab_sections="$statgrab_sections net"
-fi
+# Statgrab
+# source: http://www.i-scream.org/libstatgrab/
+# binary: http://www.opencsw.org/
+if type statgrab &>/dev/null
+then
+    statgrab_vars="const. cpu. disk. general. mem. page. proc. swap. user."
+    statgrab_sections="proc cpu disk page"
 
-if statgrab $statgrab_vars > /tmp/statgrab.$$ 2>/dev/null
+    # Only collect net stats in global zone.
+    if [ "$zonename" == "global" ]
     then
+        statgrab_vars="$statgrab_vars net."
+        statgrab_sections="$statgrab_sections net"
+    fi
+
+    statgrab $statgrab_vars 1>/tmp/statgrab.$$ 2>/dev/null
     for s in $statgrab_sections
     do
         echo "<<<statgrab_$s>>>"
-        cat /tmp/statgrab.$$ | grep "^$s\." | cut -d. -f2-99 | sed 's/ *= */ /'
+        grep "^$s\." /tmp/statgrab.$$ | cut -d. -f2-99 | sed 's/ *= */ /'
     done
 
     echo '<<<statgrab_mem>>>'
-    cat /tmp/statgrab.$$ | egrep "^(swap|mem)\." | sed 's/ *= */ /'
+    egrep "^(swap|mem)\." /tmp/statgrab.$$ | sed 's/ *= */ /'
 
+    [ -f /tmp/statgrab.$$ ] && rm -f /tmp/statgrab.$$
 fi
-[ -f /tmp/statgrab.$$ ] && rm -f /tmp/statgrab.$$
 
-# Output of cpu from Linux agent simulated
-# (Thanks to Cameron Pierce)
+
+# /proc/cpu
+# Simulated Output of Linux /proc/cpu
 echo '<<<cpu>>>'
-load=`uptime|sed -e 's;.*average: \([0-9]\{1,\}\.[0-9]\{1,\}\), \([0-9]\{1,\}\.[0-9]\{1,\}\), \([0-9]\{1,\}\.[0-9]\{1,\}\).*;\1 \2 \3;'`
-ps=`ps -ef|wc -l|sed -e 's;[ ]\{1,\};;'`
-procs=`psrinfo|wc -l|sed -e 's;[ ]\{1,\};;'`
+load=$(uptime|sed -e 's;.*average: \([0-9]\{1,\}\.[0-9]\{1,\}\), \([0-9]\{1,\}\.[0-9]\{1,\}\), \([0-9]\{1,\}\.[0-9]\{1,\}\).*;\1 \2 \3;')
+ps=$(($(ps -o comm $pszone | wc -l)))
+procs=$(($(psrinfo | wc -l)))
 echo $load 1/$ps $$ $procs
 
-# check zpool status
+
+# zpool status
 if [ -x /sbin/zpool ]; then
-   echo "<<<zpool_status>>>"
-   /sbin/zpool status -x
+    echo "<<<zpool_status>>>"
+    /sbin/zpool status -x
 fi
 
-# Uptime compatible with Linux format (thanks to Daniel Roettgermann)
+
+# /proc/uptime
+# Simulated output of Linux /proc/uptime
 echo '<<<uptime>>>'
-echo `expr \`nawk 'BEGIN{print srand()}'\` - \`kstat -p unix:0:system_misc:boot_time |awk '{print $2}'\``
+proc0=$(ls -td  /proc/* | tail -1)
+ctime=$(nawk 'BEGIN{print srand()}')
+btime=$(truss -v lstat -t lstat ls -d $proc0 2>&1 | nawk '/ct = /{printf "%d\n", $9}')
+echo $(($ctime - $btime))
 
 
-# NTP 
-# This will only work on Sol10 and above
-if `svcs |grep ntp > /dev/null`; then 
+# NTP
+ps -o comm $pszone | grep -w xntpd &>/dev/null
+if [ $? -eq 0 ]
+then
     echo '<<<ntp>>>'
-    # use ntpq instead, xntpdc gives less info.
-    #xntpdc -p | sed -e 1,2d -e 's/^\(.\)/\1 /' -e 's/^ /%/'
     ntpq -p | sed -e 1,2d -e 's/^\(.\)/\1 /' -e 's/^ /%/'
 fi
 
-#Memory 
-if [ -x /usr/bin/top ]; then
+
+# Memory
+if [ -x /usr/bin/top ]
+then
     echo "<<<solaris_mem>>>"
-    /usr/bin/top | grep Memory
+    /usr/bin/top | grep '^Memory:'
 fi
+
 
 # TCP Connection stats
 echo '<<<tcp_conn_stats>>>'
-netstat -nafinet -P tcp | tail  +5 | \
-awk '{ c[$7]++; } END { for (x in c) { print x, c[x];}}'
+netstat -n -a -f inet -P tcp | tail  +5 | \
+nawk '{ c[$7]++; } END { for (x in c) { print x, c[x]; } }'
 
 
-# Multipathing on Solaris10+
-if [ "$platform" != "zone" ]; then
-    echo '<<<solaris_multipath>>>'
-    mpathadm list LU | awk '{if(NR%3==1){dev=$1}
-                             if(NR%3==2){tc=$NF}
-                             if(NR%3==0){printf "%s %s %s\n",dev,tc,$NF}}'
+# Multipathing
+if type mpathadm &>/dev/null
+then
+    if [ "$zonename" == "global" ]
+    then
+        echo '<<<solaris_multipath>>>'
+        mpathadm list LU | nawk '{if(NR%3==1){dev=$1}
+                                  if(NR%3==2){tc=$NF}
+                                  if(NR%3==0){printf "%s %s %s\n",dev,tc,$NF}}'
+    fi
 fi
 
 
 if cd $PLUGINSDIR 2>/dev/null
 then
-    for skript in `ls`
+    for skript in $(ls)
     do
         if [ -x "$skript" ] ; then
             ./$skript
@@ -174,34 +193,42 @@ then
   done
 fi
 
+
 # Fileinfo-Check: put patterns for files into $MK_CONFDIR/fileinfo.cfg
-echo '<<<fileinfo:sep(124)>>>'
-if [ -f "$MK_CONFDIR/fileinfo.cfg" ] ; 
+if [ -f "$MK_CONFDIR/fileinfo.cfg" ]
 then
+    echo '<<<fileinfo:sep(124)>>>'
     echo ''
     nawk 'BEGIN{print srand()}'
-    echo `ls $(cat "$MK_CONFDIR/fileinfo.cfg")`"|"`ls -nl $(cat "$MK_CONFDIR/fileinfo.cfg") | awk '{print $5}'`"|"`truss -v lstat -t lstat ls -l $(cat "$MK_CONFDIR/fileinfo.cfg") 2>&1|grep mt |awk '{print $9}'|cut -d . -f 1` 
+    file=$(ls $(cat "$MK_CONFDIR/fileinfo.cfg"))
+    size=$(ls -nl $file | nawk '{print $5}')
+    date=$(truss -v lstat -t lstat ls -d $file 2>&1 | nawk '/mt = /{printf "%d\n", $9}')
+    echo ${file}'|'${size}'|'${date}
 fi
 
-echo '<<<local>>>'
+
+# Local
 if cd $LOCALDIR 2>/dev/null
 then
-  for skript in `ls`
-  do
-    if [ -x "$skript" ] ; then
-        ./$skript
-    fi
-  done
+    echo '<<<local>>>'
+    for skript in $(ls)
+    do
+        if [ -x "$skript" ]
+        then
+            ./$skript
+        fi
+    done
 fi
 
+
 # MK's Remote Plugin Executor
-if [ -f "$MK_CONFDIR/mrpe.cfg" ]
+if test -f "$MK_CONFDIR/mrpe.cfg"
 then
     echo '<<<mrpe>>>'
     grep -v '^ *#' "$MK_CONFDIR/mrpe.cfg" | grep -v '^ *$' | \
     while read descr cmdline
     do
-        OUTPUT=`$cmdline`
+        OUTPUT=$($cmdline)
         echo "$descr $? $OUTPUT"
     done
 fi

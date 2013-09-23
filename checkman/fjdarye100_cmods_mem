@@ -1,6 +1,6 @@
-title: Monitor memory of channel modules on Fujitsu ETERNUS DX80 S2 storage systems
-agents: SNMP
-author: Philipp Hoefflin <hoefflin+cmk@fuh-e.de>
+title: Fujitsu ETERNUS DX80 S2 storage systems: Memory of Channel Modules
+agents: snmp
+catalog: hw/storagehw/fujitsu
 license: GPLv2
 distribution: none
 description:

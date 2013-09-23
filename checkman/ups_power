@@ -1,6 +1,6 @@
-title: Check output power of UPS using generic MIB
+title: Generic UPS Device: Output power
 agents: snmp
-author: Mathias Kettner <mk@mathias-kettner.de>
+catalog: hw/power
 license: GPL
 distribution: check_mk
 description:

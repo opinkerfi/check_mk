@@ -1,6 +1,6 @@
-title: Check the memory usage in solaris
+title: Memory usage in solaris
 agents: solaris
-author: Bastian Kuhn <bk@mathias-kettner.de>
+catalog: os/kernel
 license: GPL
 distribution: check_mk
 description:

@@ -25,7 +25,6 @@
 # Boston, MA 02110-1301 USA.
 
 import views, time, defaults, dashboard
-import weblib
 from lib import *
 
 # Python 2.3 does not have 'set' in normal namespace.
@@ -156,7 +155,7 @@ def render_groups(what):
     groups.sort() # sort by Alias in lowercase
     html.write('<ul>')
     for alias_lower, alias, name in groups:
-        url = "view.py?view_name=%sgroup&%sgroup=%s" % (what, what, htmllib.urlencode(name))
+        url = "view.py?view_name=%sgroup&%sgroup=%s" % (what, what, html.urlencode(name))
         bulletlink(alias or name, url)
     html.write('</ul>')
 
@@ -227,7 +226,7 @@ def render_hosts(mode):
         else:
             statecolor = 0
         html.write('<div class="statebullet state%d">&nbsp;</div> ' % statecolor)
-        html.write(link(host, target + ("&host=%s&site=%s" % (htmllib.urlencode(host), htmllib.urlencode(site)))))
+        html.write(link(host, target + ("&host=%s&site=%s" % (html.urlencode(host), html.urlencode(site)))))
         html.write("</td>")
         if col == num_columns:
             html.write("</tr>\n")
@@ -264,7 +263,7 @@ sidebar_snapins["summary_hosts"] = {
 
 sidebar_snapins["problem_hosts"] = {
     "title" : _("Problem hosts"),
-    "description" : _("A summary state of all hosts that have problem, with links to problems of those hosts"),
+    "description" : _("A summary state of all hosts that have a problem, with links to problems of those hosts"),
     "render" : lambda: render_hosts("problems"),
     "allowed" : [ "user", "admin", "guest" ],
     "refresh" : True,
@@ -334,7 +333,7 @@ def render_hostmatrix():
             s = 1
         else:
             s = 0
-        url = "view.py?view_name=host&site=%s&host=%s" % (htmllib.urlencode(site), htmllib.urlencode(host))
+        url = "view.py?view_name=host&site=%s&host=%s" % (html.urlencode(site), html.urlencode(host))
         html.write('<td class="state state%s"><a href="%s" title="%s" target="main" style="width:%spx;height:%spx;"></a></td>' %
                                                                                            (s, url, host, cell_size, cell_size))
         if col == n or (row == rows and n == lastcols):
@@ -888,6 +887,7 @@ def render_master_control():
         ( "enable_notifications",     _("Notifications" )),
         ( "execute_service_checks",   _("Service checks" )),
         ( "execute_host_checks",      _("Host checks" )),
+        ( "enable_flap_detection",    _("Flap Detection" )),
         ( "enable_event_handlers",    _("Event handlers" )),
         ( "process_performance_data", _("Performance data" )),
         ]
@@ -900,8 +900,13 @@ def render_master_control():
         if siteid:
             sitealias = html.site_status[siteid]["site"]["alias"]
             html.begin_foldable_container("master_control", siteid, True, sitealias)
+        is_cmc = html.site_status[siteid]["program_version"].startswith("Check_MK ")
         html.write("<table class=master_control>\n")
         for i, (colname, title) in enumerate(items):
+            # Do not show event handlers on Check_MK Micro Core
+            if is_cmc and colname == 'enable_event_handlers':
+                continue
+
             colvalue = siteline[i + 1]
             url = defaults.url_prefix + ("check_mk/switch_master_state.py?site=%s&switch=%s&state=%d" % (siteid, colname, 1 - colvalue))
             onclick = "get_url('%s', updateContents, 'snapin_master_control')" % url
@@ -1018,7 +1023,7 @@ def render_custom_links():
         return
 
     def render_list(ids, links):
-        states = weblib.get_tree_states('customlinks')
+        states = html.get_tree_states('customlinks')
         n = 0
         for entry in links:
             n += 1

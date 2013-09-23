@@ -43,6 +43,19 @@ td.state {
     width: 32px;
 }
 
+td.svcstate.stale {
+    background-image: url("images/white_60percent.png");
+    background-repeat: repeat;
+}
+
+table.data tr.data td.stale,
+table.data td.perfometer.stale div.title {
+    color: #888;
+    text-shadow: 0.8px 0.8px 0.8px #fff;
+}
+
+
+
 /* OK/UP */
 .state0, .hstate0, .state0 a, .hstate0 a {
     background-color: #0b3; color: #fff;
@@ -216,20 +229,20 @@ td.statex {  /* zero count */
 }
 
 /* Row coloring in case of the different states */
-tr.odd0  { background-color: #eee; }
-tr.even0 { background-color: #ddd; }
+tr.odd0        { background-color: #eee; }
+tr.even0       { background-color: #ddd; }
 
 td.odd0  { background-color: #eee; }
 td.even0 { background-color: #ddd; }
 
-tr.odd1  { background-color: #ffc; }
-tr.even1 { background-color: #ffa; }
+tr.odd1        { background-color: #ffc; }
+tr.even1       { background-color: #ffa; }
 
-tr.odd2  { background-color: #fcc; }
-tr.even2 { background-color: #faa; }
+tr.odd2        { background-color: #fcc; }
+tr.even2       { background-color: #faa; }
 
-tr.odd3  { background-color: #ffe0a0; }
-tr.even3 { background-color: #ffefaf; }
+tr.odd3        { background-color: #ffe0a0; }
+tr.even3       { background-color: #ffefaf; }
 
 /* Row headers in single dataset layout */
 

@@ -1,6 +1,6 @@
-title: Check hardware sensors of Ironport Appliances
+title: IronPort Appliances: Hardware sensors
 agents: snmp
-author: Mathias Kettner <mk@mathias-kettner.de>
+catalog: hw/network/cisco
 license: GPL
 distribution: check_mk
 description:

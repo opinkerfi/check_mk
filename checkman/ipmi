@@ -1,6 +1,6 @@
-title: Check hardware sensors with ipmitool
+title: Hardware sensors with ipmitool
 agents: linux
-author: Mathias Kettner <mk@mathias-kettner.de>
+catalog: os/hardware
 license: GPL
 distribution: check_mk
 description:

@@ -1,6 +1,6 @@
-title: Check GPU errors on NVIDIA graphics card
+title: GPU errors on NVIDIA graphics card
 agents: linux
-author: Mathias Kettner <mk@mathias-kettner.de>
+catalog: os/hardware
 license: GPL
 distribution: check_mk
 description:

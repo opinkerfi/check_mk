@@ -1,6 +1,6 @@
-title: Monitor interactively logged in users in OpenVMS
+title: Interactively logged in users in OpenVMS
 agents: openvms
-author: Mathias Kettner <mk@mathias-kettner.de>
+catalog: os/misc
 license: GPL
 distribution: check_mk
 description:

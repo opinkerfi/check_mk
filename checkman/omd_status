@@ -1,6 +1,6 @@
-title: Check status of OMD sites
+title: Status of OMD sites
 agents: linux
-author: Mathias Kettner <mk@mathias-kettner.de>
+catalog: app/omd
 license: GPL
 distribution: check_mk
 description:
