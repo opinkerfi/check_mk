@@ -145,14 +145,6 @@ bool Store::answerRequest(InputBuffer *input, OutputBuffer *output)
     return output->doKeepalive();
 }
 
-void Store::answerCommandRequest(const char *command)
-{
-    int buffer_items = -1;
-    /* int ret = */
-    submit_external_command((char *)command, &buffer_items);
-}
-
-
 void Store::answerGetRequest(InputBuffer *input, OutputBuffer *output, const char *tablename)
 {
     output->reset();

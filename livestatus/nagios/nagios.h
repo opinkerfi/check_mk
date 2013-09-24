@@ -803,9 +803,6 @@ int shutdown_command_file_worker_thread(void);
 void * command_file_worker_thread(void *);
 void cleanup_command_file_worker_thread(void *);
 
-int submit_external_command(char *,int *);
-int submit_raw_external_command(char *,time_t *,int *);
-
 char *get_program_version(void);
 char *get_program_modification_date(void);
 
